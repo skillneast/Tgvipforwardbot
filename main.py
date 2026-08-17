@@ -35,7 +35,7 @@ SESSION_STRING = os.environ.get(
 )
 DELAY_SECONDS = int(os.environ.get("DELAY_SECONDS", 3))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "railway_live_dashboard.db"
+DB_NAME = "final_ld_cancel_dashboard.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -91,6 +91,14 @@ def save_progress(source_chat: str, dest_chat: str, start_id: int, current_id: i
     conn.commit()
     conn.close()
 
+def delete_task_progress():
+    """Completely deletes saved progress from DB on cancel so resume cannot be used."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM task_state WHERE id = 1")
+    conn.commit()
+    conn.close()
+
 def get_progress():
     conn = get_db()
     cursor = conn.cursor()
@@ -101,9 +109,9 @@ def get_progress():
 
 init_db()
 
-# ==================== PYROGRAM CLIENT ====================
+# ==================== PYROGRAM CLIENT & GLOBAL STATE ====================
 app = Client(
-    "railway_dashboard_session",
+    "final_userbot_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -113,6 +121,7 @@ task_running = False
 is_paused = False
 task_cancelled = False
 task_start_time = 0.0
+active_dashboard_msg: Optional[Message] = None
 
 # ==================== UI & CALCULATION HELPERS ====================
 def format_time(seconds: float) -> str:
@@ -160,7 +169,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        "<b>🚀 REAL-TIME COPY DASHBOARD</b>\n"
+        "<b>🚀 REAL-TIME LIVE DASHBOARD</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source Chat:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target Chat:</b> <code>{dest_chat}</code>\n"
@@ -185,8 +194,8 @@ def render_dashboard(
             InlineKeyboardButton("▶️ Resume", callback_data="btn_resume")
         ],
         [
-            InlineKeyboardButton("🔄 Live Refresh", callback_data="btn_status"),
-            InlineKeyboardButton("🛑 Cancel", callback_data="btn_stop")
+            InlineKeyboardButton("🔄 Refresh", callback_data="btn_status"),
+            InlineKeyboardButton("🛑 Cancel Task", callback_data="btn_stop")
         ]
     ])
 
@@ -267,28 +276,131 @@ async def start_command(client: Client, message: Message):
         f"🎯 <b>Target Channel:</b> <code>{target}</code>\n"
         f"🎨 <b>Active Brand:</b> <code>{brand}</code>\n\n"
         "<b>📖 Available Commands:</b>\n"
-        "• <code>/copy &lt;link&gt;</code> — Start copy directly with Real-Time Dashboard\n"
+        "• <code>/copy &lt;link&gt;</code> — Start copy directly with Live Dashboard\n"
+        "• <code>/ld</code> — View instant live progress dashboard\n"
+        "• <code>/cancel</code> — Stop current task & delete checkpoint\n"
+        "• <code>/pause</code> — Temporarily pause the running task\n"
+        "• <code>/resume</code> — Resume only if task was paused\n"
         "• <code>/settarget &lt;id&gt;</code> — Set destination channel ID\n"
         "• <code>/setbrand &lt;name&gt;</code> — Change caption brand watermark\n"
         "• <code>/getbrand</code> — Check current brand name\n"
-        "• <code>/status</code> — Open Live Dashboard view\n"
-        "• <code>/pause</code> | <code>/resume</code> — Process control\n"
         "• <code>/sync</code> — Sync channel dialogs & access hashes\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("📊 Dashboard", callback_data="btn_status"),
+            InlineKeyboardButton("📊 Live Dashboard (/ld)", callback_data="btn_status"),
             InlineKeyboardButton("🎨 Brand Info", callback_data="btn_brand")
         ],
         [
             InlineKeyboardButton("⏸️ Pause", callback_data="btn_pause"),
             InlineKeyboardButton("▶️ Resume", callback_data="btn_resume")
+        ],
+        [
+            InlineKeyboardButton("🛑 Cancel Task", callback_data="btn_stop")
         ]
     ])
 
     await message.reply_text(welcome_text, reply_markup=keyboard, disable_web_page_preview=True)
+
+@app.on_message(ALLOWED_FILTER & filters.command(["cancel", "stop"], prefixes=["/", "."]))
+async def cancel_command(client: Client, message: Message):
+    global task_running, is_paused, task_cancelled
+    if task_running or is_paused:
+        task_cancelled = True
+        task_running = False
+        is_paused = False
+        delete_task_progress()
+        await message.reply_text(
+            "<b>🛑 Task Cancelled & Deleted!</b>\n\n"
+            "Task ko permanently rok diya gaya hai aur data delete kar diya gaya hai. "
+            "Ise <code>/resume</code> se wapas chalu nahi kiya ja sakta."
+        )
+    else:
+        delete_task_progress()
+        await message.reply_text("ℹ️ <b>No active or paused task to cancel. Database cleared.</b>")
+
+@app.on_message(ALLOWED_FILTER & filters.command(["ld", "status"], prefixes=["/", "."]))
+async def ld_command(client: Client, message: Message):
+    await send_status_view(message)
+
+async def send_status_view(target_ctx: Message | CallbackQuery):
+    global active_dashboard_msg
+    saved = get_progress()
+    target_config = get_config("target_chat", "❌ Not Configured")
+    brand = get_config("brand_name", "@skillneast1")
+
+    if task_running or (saved and saved[6] in ["RUNNING", "PAUSED"]):
+        source_chat, dest_chat, start_id, current_id, last_id, copied_count, status = saved
+        status_label = "PAUSED ⏸️" if is_paused else "RUNNING 🟢"
+        card_text, keyboard = render_dashboard(
+            source_chat=source_chat,
+            dest_chat=dest_chat,
+            brand=brand,
+            start_id=start_id,
+            current_id=current_id,
+            last_id=last_id,
+            copied_count=copied_count,
+            status_label=status_label,
+            start_time=task_start_time,
+        )
+    else:
+        card_text = (
+            "<b>📊 Live Task Dashboard</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "ℹ️ <i>No task is actively running.</i>\n\n"
+            f"🎯 <b>Configured Target:</b> <code>{target_config}</code>\n"
+            f"🎨 <b>Active Brand:</b> <code>{brand}</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Refresh", callback_data="btn_status")]
+        ])
+
+    if isinstance(target_ctx, Message):
+        sent_msg = await target_ctx.reply_text(card_text, reply_markup=keyboard, disable_web_page_preview=True)
+        if task_running:
+            active_dashboard_msg = sent_msg
+    elif isinstance(target_ctx, CallbackQuery):
+        try:
+            await target_ctx.message.edit_text(card_text, reply_markup=keyboard, disable_web_page_preview=True)
+        except (MessageNotModified, Exception):
+            pass
+        await target_ctx.answer("Dashboard Refreshed")
+
+@app.on_message(ALLOWED_FILTER & filters.command(["pause"], prefixes=["/", "."]))
+async def pause_task(client: Client, message: Message):
+    global is_paused
+    if task_running and not is_paused:
+        is_paused = True
+        await message.reply_text("⏸️ <b>Task Paused Successfully.</b>\nUse <code>/resume</code> jab aap wapas chalu karna chahein.")
+    else:
+        await message.reply_text("❌ <b>No active copy task is currently running to pause.</b>")
+
+@app.on_message(ALLOWED_FILTER & filters.command(["resume"], prefixes=["/", "."]))
+async def resume_task(client: Client, message: Message):
+    global is_paused, task_running, task_start_time, task_cancelled
+    if task_running and is_paused:
+        is_paused = False
+        await message.reply_text("▶️ <b>Task Resumed. Continuing message processing...</b>")
+    elif not task_running:
+        saved = get_progress()
+        if saved and saved[6] == "PAUSED":
+            source_chat, dest_chat, start_id, current_id, last_id, copied_count, _ = saved
+            is_paused = False
+            task_cancelled = False
+            task_start_time = time.time()
+            asyncio.create_task(
+                run_copy_process(client, message, source_chat, dest_chat, start_id, current_id, last_id, copied_count)
+            )
+            await message.reply_text(f"▶️ <b>Resuming paused task from Message ID:</b> <code>{current_id}</code>")
+        else:
+            await message.reply_text(
+                "❌ <b>No paused task found to resume!</b>\n\n"
+                "Resume sirf tab kaam karta hai jab aapne <code>/pause</code> kiya ho. "
+                "Cancel kiya hua task resume nahi hota."
+            )
 
 @app.on_message(ALLOWED_FILTER & filters.command(["setbrand"], prefixes=["/", "."]))
 async def set_brand_command(client: Client, message: Message):
@@ -337,80 +449,6 @@ async def set_target_cmd(client: Client, message: Message):
         f"<i>Make sure your account is an Admin with post permissions.</i>"
     )
 
-@app.on_message(ALLOWED_FILTER & filters.command(["pause"], prefixes=["/", "."]))
-async def pause_task(client: Client, message: Message):
-    global is_paused
-    if task_running and not is_paused:
-        is_paused = True
-        await message.reply_text("⏸️ <b>Task Paused.</b> Use <code>/resume</code> to continue.")
-    else:
-        await message.reply_text("❌ <b>No active copy task running.</b>")
-
-@app.on_message(ALLOWED_FILTER & filters.command(["resume"], prefixes=["/", "."]))
-async def resume_task(client: Client, message: Message):
-    global is_paused, task_running, task_start_time, task_cancelled
-    if task_running and is_paused:
-        is_paused = False
-        await message.reply_text("▶️ <b>Task Resumed. Continuing message processing...</b>")
-    elif not task_running:
-        saved = get_progress()
-        if saved and saved[6] in ["PAUSED", "RUNNING"]:
-            source_chat, dest_chat, start_id, current_id, last_id, copied_count, _ = saved
-            is_paused = False
-            task_cancelled = False
-            task_start_time = time.time()
-            asyncio.create_task(
-                run_copy_process(client, message, source_chat, dest_chat, start_id, current_id, last_id, copied_count)
-            )
-            await message.reply_text(f"▶️ <b>Resuming task from Checkpoint Message ID:</b> <code>{current_id}</code>")
-        else:
-            await message.reply_text("❌ <b>No paused or incomplete task found in database.</b>")
-
-@app.on_message(ALLOWED_FILTER & filters.command(["status"], prefixes=["/", "."]))
-async def status_command(client: Client, message: Message):
-    await send_status_view(message)
-
-async def send_status_view(target_ctx: Message | CallbackQuery):
-    saved = get_progress()
-    target_config = get_config("target_chat", "❌ Not Configured")
-    brand = get_config("brand_name", "@skillneast1")
-
-    if task_running or (saved and saved[6] in ["RUNNING", "PAUSED"]):
-        source_chat, dest_chat, start_id, current_id, last_id, copied_count, status = saved
-        status_label = "PAUSED ⏸️" if is_paused else "RUNNING 🟢"
-        card_text, keyboard = render_dashboard(
-            source_chat=source_chat,
-            dest_chat=dest_chat,
-            brand=brand,
-            start_id=start_id,
-            current_id=current_id,
-            last_id=last_id,
-            copied_count=copied_count,
-            status_label=status_label,
-            start_time=task_start_time,
-        )
-    else:
-        card_text = (
-            "<b>📊 Live Task Dashboard</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "ℹ️ <i>No task is actively running.</i>\n\n"
-            f"🎯 <b>Configured Target:</b> <code>{target_config}</code>\n"
-            f"🎨 <b>Active Brand:</b> <code>{brand}</code>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        )
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Refresh", callback_data="btn_status")]
-        ])
-
-    if isinstance(target_ctx, Message):
-        await target_ctx.reply_text(card_text, reply_markup=keyboard, disable_web_page_preview=True)
-    elif isinstance(target_ctx, CallbackQuery):
-        try:
-            await target_ctx.message.edit_text(card_text, reply_markup=keyboard, disable_web_page_preview=True)
-        except (MessageNotModified, Exception):
-            pass
-        await target_ctx.answer("Refreshed")
-
 @app.on_callback_query()
 async def handle_callbacks(client: Client, callback: CallbackQuery):
     global is_paused, task_running, task_cancelled, task_start_time
@@ -434,7 +472,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
             await send_status_view(callback)
         elif not task_running:
             saved = get_progress()
-            if saved and saved[6] in ["PAUSED", "RUNNING"]:
+            if saved and saved[6] == "PAUSED":
                 source_chat, dest_chat, start_id, current_id, last_id, copied_count, _ = saved
                 is_paused = False
                 task_cancelled = False
@@ -445,18 +483,20 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
                 await callback.answer("Resumed from checkpoint!", show_alert=False)
                 await send_status_view(callback)
             else:
-                await callback.answer("No saved checkpoint found.", show_alert=True)
+                await callback.answer("No paused task found to resume.", show_alert=True)
         else:
             await callback.answer("Task already running.", show_alert=True)
 
     elif data == "btn_stop":
-        if task_running:
+        if task_running or is_paused:
             task_cancelled = True
             task_running = False
-            await callback.answer("🛑 Task Cancelled", show_alert=True)
+            is_paused = False
+            delete_task_progress()
+            await callback.answer("Task Cancelled & Deleted 🛑", show_alert=True)
             await send_status_view(callback)
         else:
-            await callback.answer("No active task to stop.", show_alert=True)
+            await callback.answer("No active task to cancel.", show_alert=True)
 
     elif data == "btn_brand":
         brand = get_config("brand_name", "@skillneast1")
@@ -468,7 +508,7 @@ async def start_copy_command(client: Client, message: Message):
     global task_running, is_paused, task_cancelled, task_start_time
 
     if task_running:
-        await message.reply_text("⚠️ <b>A task is already running!</b> Use <code>/pause</code> or wait for completion.")
+        await message.reply_text("⚠️ <b>A task is already running!</b> Use <code>/ld</code> to check or <code>/cancel</code> to stop.")
         return
 
     dest_chat = get_config("target_chat")
@@ -499,7 +539,7 @@ async def start_copy_command(client: Client, message: Message):
         run_copy_process(client, message, source_chat, dest_chat, start_msg_id, start_msg_id, end_msg_id, 0)
     )
 
-# ==================== CORE WORKER WITH REAL-TIME DASHBOARD ====================
+# ==================== CORE WORKER WITH LIVE EDIT DASHBOARD ====================
 async def run_copy_process(
     client: Client,
     notify_message: Message,
@@ -510,7 +550,7 @@ async def run_copy_process(
     last_id: int,
     initial_copied_count: int,
 ):
-    global task_running, is_paused, task_cancelled, task_start_time
+    global task_running, is_paused, task_cancelled, task_start_time, active_dashboard_msg
     task_running = True
     is_paused = False
     task_cancelled = False
@@ -554,19 +594,23 @@ async def run_copy_process(
         reply_markup=initial_keyboard,
         disable_web_page_preview=True,
     )
+    active_dashboard_msg = dashboard_msg
 
     last_dashboard_edit_time = time.time()
 
     while current_id <= last_id:
         if task_cancelled:
-            save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "CANCELLED")
-            await notify_message.reply_text("🛑 <b>Task cancelled by user.</b>")
+            delete_task_progress()
             task_running = False
             return
 
         while is_paused:
             save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "PAUSED")
             await asyncio.sleep(2)
+            if task_cancelled:
+                delete_task_progress()
+                task_running = False
+                return
 
         try:
             msg: Message = await client.get_messages(source_chat_obj.id, current_id)
@@ -611,7 +655,7 @@ async def run_copy_process(
             current_id += 1
             save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "RUNNING")
 
-            # 2. REAL-TIME DASHBOARD AUTO-EDIT (Every 3-4 seconds)
+            # 2. REAL-TIME DASHBOARD AUTO-EDIT (Every 3.5 seconds)
             now = time.time()
             if (now - last_dashboard_edit_time >= 3.5) or (current_id > last_id):
                 last_dashboard_edit_time = now
@@ -627,11 +671,12 @@ async def run_copy_process(
                     start_time=task_start_time,
                 )
                 try:
-                    await dashboard_msg.edit_text(
-                        updated_card,
-                        reply_markup=updated_keyboard,
-                        disable_web_page_preview=True
-                    )
+                    if active_dashboard_msg:
+                        await active_dashboard_msg.edit_text(
+                            updated_card,
+                            reply_markup=updated_keyboard,
+                            disable_web_page_preview=True
+                        )
                 except (MessageNotModified, FloodWait, Exception):
                     pass
 
@@ -640,7 +685,7 @@ async def run_copy_process(
                 f"❌ <b>Permission Denied!</b> Ensure your account is an <b>ADMIN</b> in: <code>{dest_chat}</code>"
             )
             task_running = False
-            save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "STOPPED")
+            delete_task_progress()
             return
 
         except FloodWait as e:
@@ -650,7 +695,7 @@ async def run_copy_process(
             await asyncio.sleep(1)
 
     task_running = False
-    save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "COMPLETED")
+    delete_task_progress()
 
     # 3. FINAL COMPLETED DASHBOARD VIEW
     completed_card, completed_keyboard = render_dashboard(
@@ -665,11 +710,14 @@ async def run_copy_process(
         start_time=task_start_time,
     )
     try:
-        await dashboard_msg.edit_text(
-            completed_card,
-            reply_markup=completed_keyboard,
-            disable_web_page_preview=True
-        )
+        if active_dashboard_msg:
+            await active_dashboard_msg.edit_text(
+                completed_card,
+                reply_markup=completed_keyboard,
+                disable_web_page_preview=True
+            )
+        else:
+            await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
     except Exception:
         await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
 
@@ -678,7 +726,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Live Dashboard Userbot is Online & Ready on Railway!")
+    print("✅ Real-Time Dashboard Userbot is Online & Ready!")
     await start_web_server()
 
 if __name__ == "__main__":
