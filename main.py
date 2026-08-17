@@ -24,10 +24,9 @@ from pyrogram.types import (
     Message,
 )
 
-# Google Colab / Asyncio Event Loop Fix
 nest_asyncio.apply()
 
-# ==================== CONFIGURATION & CREDENTIALS ====================
+# ==================== CONFIGURATION ====================
 API_ID = int(os.environ.get("API_ID", 33720317))
 API_HASH = os.environ.get("API_HASH", "145db99951f44490f134ac7446126630")
 SESSION_STRING = os.environ.get(
@@ -36,16 +35,14 @@ SESSION_STRING = os.environ.get(
 )
 DELAY_SECONDS = int(os.environ.get("DELAY_SECONDS", 3))
 PORT = int(os.environ.get("PORT", 8080))
+DB_NAME = "final_live_dashboard.db"
 
-DB_NAME = "dashboard_userbot.db"
-CUSTOM_THUMB_PATH = "custom_thumb.jpg"
-
-# ==================== DATABASE INITIALIZATION ====================
-def get_db_connection() -> sqlite3.Connection:
+# ==================== DATABASE ====================
+def get_db():
     return sqlite3.connect(DB_NAME, timeout=15)
 
 def init_db():
-    conn = get_db_connection()
+    conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS config (
@@ -70,7 +67,7 @@ def init_db():
     conn.close()
 
 def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
-    conn = get_db_connection()
+    conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT value FROM config WHERE key = ?", (key,))
     row = cursor.fetchone()
@@ -78,14 +75,14 @@ def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
     return row[0] if row else default
 
 def set_config(key: str, value: str):
-    conn = get_db_connection()
+    conn = get_db()
     cursor = conn.cursor()
     cursor.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, str(value)))
     conn.commit()
     conn.close()
 
 def save_progress(source_chat: str, dest_chat: str, start_id: int, current_id: int, last_id: int, copied_count: int, status: str):
-    conn = get_db_connection()
+    conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT OR REPLACE INTO task_state (id, source_chat, dest_chat, start_id, current_id, last_id, copied_count, status)
@@ -95,7 +92,7 @@ def save_progress(source_chat: str, dest_chat: str, start_id: int, current_id: i
     conn.close()
 
 def get_progress():
-    conn = get_db_connection()
+    conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT source_chat, dest_chat, start_id, current_id, last_id, copied_count, status FROM task_state WHERE id = 1")
     row = cursor.fetchone()
@@ -104,9 +101,9 @@ def get_progress():
 
 init_db()
 
-# ==================== PYROGRAM CLIENT & GLOBAL STATE ====================
+# ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "dashboard_userbot_session",
+    "final_dashboard_userbot",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -119,7 +116,6 @@ task_start_time = 0.0
 
 # ==================== UI & CALCULATION HELPERS ====================
 def format_time(seconds: float) -> str:
-    """Format seconds into HHh MMm SSs format."""
     seconds = int(max(0, seconds))
     hours, remainder = divmod(seconds, 3600)
     minutes, secs = divmod(remainder, 60)
@@ -128,13 +124,12 @@ def format_time(seconds: float) -> str:
     return f"{minutes:02d}m {secs:02d}s"
 
 def generate_progress_bar(percentage: float, length: int = 12) -> str:
-    """Generates ASCII visual progress bar."""
     filled = int(round(length * (percentage / 100)))
     filled = max(0, min(length, filled))
     empty = length - filled
     return "█" * filled + "░" * empty
 
-def build_dashboard_text(
+def render_dashboard(
     source_chat: str,
     dest_chat: str,
     brand: str,
@@ -142,47 +137,45 @@ def build_dashboard_text(
     current_id: int,
     last_id: int,
     copied_count: int,
-    status_text: str,
+    status_label: str,
     start_time: float,
 ) -> Tuple[str, InlineKeyboardMarkup]:
-    """Calculates all metrics and renders the UX dashboard text card with inline buttons."""
     total_msgs = max(1, (last_id - start_id) + 1)
     processed_count = max(0, min(total_msgs, (current_id - start_id) + 1))
     remaining_msgs = max(0, last_id - current_id)
     percentage = round((processed_count / total_msgs) * 100, 1)
-    progress_bar = generate_progress_bar(percentage)
+    bar = generate_progress_bar(percentage)
 
-    # Time & Speed calculations
-    elapsed_seconds = max(0.1, time.time() - start_time) if start_time > 0 else 0.1
-    elapsed_str = format_time(elapsed_seconds)
+    # Time & Speed
+    elapsed_sec = max(0.1, time.time() - start_time) if start_time > 0 else 0.1
+    elapsed_str = format_time(elapsed_sec)
     
-    speed_per_sec = processed_count / elapsed_seconds if elapsed_seconds > 0 else 0
+    speed_per_sec = processed_count / elapsed_sec if elapsed_sec > 0 else 0
     speed_per_min = round(speed_per_sec * 60, 1)
 
-    # ETA Calculation
     if speed_per_sec > 0:
-        eta_seconds = remaining_msgs / speed_per_sec
+        eta_sec = remaining_msgs / speed_per_sec
     else:
-        eta_seconds = remaining_msgs * DELAY_SECONDS
-    eta_str = format_time(eta_seconds) if remaining_msgs > 0 else "00m 00s"
+        eta_sec = remaining_msgs * DELAY_SECONDS
+    eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        "<b>🚀 COPY PROCESS LIVE DASHBOARD</b>\n"
+        "<b>🚀 REAL-TIME COPY DASHBOARD</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📍 <b>Source:</b> <code>{source_chat}</code>\n"
-        f"🎯 <b>Target:</b> <code>{dest_chat}</code>\n"
-        f"🎨 <b>Brand:</b> <code>{brand}</code>\n"
+        f"📍 <b>Source Chat:</b> <code>{source_chat}</code>\n"
+        f"🎯 <b>Target Chat:</b> <code>{dest_chat}</code>\n"
+        f"🎨 <b>Brand Watermark:</b> <code>{brand}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📊 <b>PROGRESS:</b> <code>[{progress_bar}]</code> <b>{percentage}%</b>\n\n"
-        f"🔢 <b>Current ID:</b> <code>{current_id}</code> / <code>{last_id}</code>\n"
-        f"📦 <b>Total Tasks:</b> <code>{total_msgs}</code> msgs\n"
+        f"📊 <b>PROGRESS:</b> <code>[{bar}]</code> <b>{percentage}%</b>\n\n"
+        f"🔢 <b>Current Message ID:</b> <code>{current_id}</code> / <code>{last_id}</code>\n"
+        f"📦 <b>Total in Range:</b> <code>{total_msgs}</code> msgs\n"
         f"✅ <b>Successfully Copied:</b> <code>{copied_count}</code>\n"
-        f"⏳ <b>Remaining:</b> <code>{remaining_msgs}</code> msgs\n"
+        f"⏳ <b>Remaining to Process:</b> <code>{remaining_msgs}</code> msgs\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"⏱️ <b>Elapsed Time:</b> <code>{elapsed_str}</code>\n"
         f"⌛ <b>Estimated Time (ETA):</b> <code>{eta_str}</code>\n"
-        f"⚡ <b>Speed:</b> <code>{speed_per_min} msgs/min</code>\n"
-        f"📶 <b>Status:</b> <code>{status_text}</code>\n"
+        f"⚡ <b>Transfer Speed:</b> <code>{speed_per_min} msgs/min</code>\n"
+        f"📶 <b>Current State:</b> <code>{status_label}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
@@ -192,8 +185,8 @@ def build_dashboard_text(
             InlineKeyboardButton("▶️ Resume", callback_data="btn_resume")
         ],
         [
-            InlineKeyboardButton("🔄 Refresh", callback_data="btn_status"),
-            InlineKeyboardButton("🛑 Cancel Task", callback_data="btn_stop")
+            InlineKeyboardButton("🔄 Live Refresh", callback_data="btn_status"),
+            InlineKeyboardButton("🛑 Cancel", callback_data="btn_stop")
         ]
     ])
 
@@ -240,7 +233,7 @@ async def sync_dialogs(client: Client) -> bool:
     except Exception:
         return False
 
-# ==================== DUMMY WEB SERVER FOR 24/7 HOSTING ====================
+# ==================== FASTAPI WEB SERVER ====================
 web_app = FastAPI()
 
 @web_app.get("/")
@@ -250,9 +243,8 @@ async def health_check():
         status_code=200,
         content={
             "status": "online",
-            "bot_running": task_running,
-            "is_paused": is_paused,
-            "service": "Telegram Live Dashboard Userbot"
+            "task_running": task_running,
+            "is_paused": is_paused
         }
     )
 
@@ -266,22 +258,22 @@ ALLOWED_FILTER = (filters.me | filters.private)
 
 @app.on_message(ALLOWED_FILTER & filters.command(["start", "help"], prefixes=["/", "."]))
 async def start_command(client: Client, message: Message):
-    target = get_config("target_chat", "❌ Not Set")
+    target = get_config("target_chat", "❌ Not Configured")
     brand = get_config("brand_name", "@skillneast1")
 
     welcome_text = (
-        "<b>🤖 Telegram Content Forwarder Userbot</b>\n"
+        "<b>🤖 Personal Content Forwarder Userbot</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Target Channel:</b> <code>{target}</code>\n"
-        f"🎨 <b>Active Brand Tag:</b> <code>{brand}</code>\n\n"
+        f"🎨 <b>Active Brand:</b> <code>{brand}</code>\n\n"
         "<b>📖 Available Commands:</b>\n"
-        "• <code>/copy &lt;link&gt;</code> — Start copy task with live dashboard\n"
-        "• <code>/settarget &lt;id&gt;</code> — Configure target channel ID\n"
+        "• <code>/copy &lt;link&gt;</code> — Start copy with Real-Time Dashboard\n"
+        "• <code>/settarget &lt;id&gt;</code> — Set destination channel ID\n"
         "• <code>/setbrand &lt;name&gt;</code> — Change caption brand watermark\n"
         "• <code>/getbrand</code> — Check current brand name\n"
-        "• <code>/status</code> — Open live progress & calculation dashboard\n"
+        "• <code>/status</code> — Open Live Dashboard view\n"
         "• <code>/pause</code> | <code>/resume</code> — Process control\n"
-        "• <code>/sync</code> — Reload channel peer access cache\n"
+        "• <code>/sync</code> — Sync channel dialogs & access hashes\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
@@ -311,7 +303,7 @@ async def set_brand_command(client: Client, message: Message):
     set_config("brand_name", new_brand)
 
     await message.reply_text(
-        f"<b>✅ Brand Name Updated!</b>\n\n"
+        f"<b>✅ Brand Watermark Updated!</b>\n\n"
         f"<b>Old:</b> <code>{old_brand}</code>\n"
         f"<b>New:</b> <code>{new_brand}</code>"
     )
@@ -319,7 +311,7 @@ async def set_brand_command(client: Client, message: Message):
 @app.on_message(ALLOWED_FILTER & filters.command(["getbrand", "brand"], prefixes=["/", "."]))
 async def get_brand_command(client: Client, message: Message):
     brand = get_config("brand_name", "@skillneast1")
-    await message.reply_text(f"🎨 <b>Current Brand Watermark:</b> <code>{brand}</code>")
+    await message.reply_text(f"🎨 <b>Current Brand:</b> <code>{brand}</code>")
 
 @app.on_message(ALLOWED_FILTER & filters.command(["sync"], prefixes=["/", "."]))
 async def sync_command(client: Client, message: Message):
@@ -334,7 +326,7 @@ async def sync_command(client: Client, message: Message):
 async def set_target_cmd(client: Client, message: Message):
     args = message.text.split()
     if len(args) < 2:
-        await message.reply_text("❌ <b>Error:</b> Please provide Target Channel ID.\nExample: <code>/settarget -1004415448802</code>")
+        await message.reply_text("❌ <b>Error:</b> Provide Target Channel ID.\nExample: <code>/settarget -1004415448802</code>")
         return
 
     target_chat = args[1].strip()
@@ -380,13 +372,13 @@ async def status_command(client: Client, message: Message):
 
 async def send_status_view(target_ctx: Message | CallbackQuery):
     saved = get_progress()
-    target_config = get_config("target_chat", "❌ Not Set")
+    target_config = get_config("target_chat", "❌ Not Configured")
     brand = get_config("brand_name", "@skillneast1")
 
     if task_running or (saved and saved[6] in ["RUNNING", "PAUSED"]):
         source_chat, dest_chat, start_id, current_id, last_id, copied_count, status = saved
         status_label = "PAUSED ⏸️" if is_paused else "ACTIVE 🟢"
-        card_text, keyboard = build_dashboard_text(
+        card_text, keyboard = render_dashboard(
             source_chat=source_chat,
             dest_chat=dest_chat,
             brand=brand,
@@ -394,7 +386,7 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
             current_id=current_id,
             last_id=last_id,
             copied_count=copied_count,
-            status_text=status_label,
+            status_label=status_label,
             start_time=task_start_time,
         )
     else:
@@ -417,7 +409,7 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
             await target_ctx.message.edit_text(card_text, reply_markup=keyboard, disable_web_page_preview=True)
         except (MessageNotModified, Exception):
             pass
-        await target_ctx.answer("Dashboard Refreshed")
+        await target_ctx.answer("Refreshed")
 
 @app.on_callback_query()
 async def handle_callbacks(client: Client, callback: CallbackQuery):
@@ -470,44 +462,44 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         brand = get_config("brand_name", "@skillneast1")
         await callback.answer(f"Active Brand: {brand}", show_alert=True)
 
+# ==================== MAIN COPY COMMAND ====================
 @app.on_message(ALLOWED_FILTER & filters.command(["copy"], prefixes=["/", "."]))
 async def start_copy_command(client: Client, message: Message):
     global task_running, is_paused, task_cancelled, task_start_time
 
     if task_running:
-        await message.reply_text("⚠️ <b>A task is already running!</b> Use <code>/status</code> or <code>/pause</code>.")
+        await message.reply_text("⚠️ <b>A task is already running!</b> Use <code>/pause</code> or wait for completion.")
         return
 
     dest_chat = get_config("target_chat")
     if not dest_chat:
-        await message.reply_text("❌ <b>Target Channel Not Configured!</b>\nSet it using: <code>/settarget &lt;channel_id&gt;</code>")
+        await message.reply_text("❌ <b>Target Channel Not Configured!</b>\nSet it first: <code>/settarget &lt;channel_id&gt;</code>")
         return
 
     args = message.text.split()
     if len(args) < 2:
         await message.reply_text(
             "❌ <b>Usage:</b> <code>/copy &lt;telegram_link&gt;</code>\n"
-            "Example: <code>/copy https://t.me/c/4429284952/134062-134080</code>"
+            "Example: <code>/copy https://t.me/c/4429284952/78118-78139</code>"
         )
         return
 
     source_chat, start_msg_id, end_msg_id = parse_telegram_link(args[1])
     if not source_chat or not start_msg_id or not end_msg_id:
-        await message.reply_text("❌ <b>Invalid Telegram Link!</b> Please supply a valid single or range link.")
+        await message.reply_text("❌ <b>Invalid Link Format!</b> Use format: <code>https://t.me/c/4429284952/78118-78139</code>")
         return
 
     is_paused = False
     task_cancelled = False
     task_start_time = time.time()
-
     save_progress(str(source_chat), str(dest_chat), start_msg_id, start_msg_id, end_msg_id, 0, "RUNNING")
 
-    # Launch background worker
+    # Start Copy Task with Live Dashboard
     asyncio.create_task(
         run_copy_process(client, message, source_chat, dest_chat, start_msg_id, start_msg_id, end_msg_id, 0)
     )
 
-# ==================== MAIN WORKER LOOP WITH LIVE DASHBOARD ====================
+# ==================== CORE WORKER WITH LIVE EDIT DASHBOARD ====================
 async def run_copy_process(
     client: Client,
     notify_message: Message,
@@ -523,7 +515,7 @@ async def run_copy_process(
     is_paused = False
     task_cancelled = False
 
-    # Resolve Chat Objects & Peer Hashes
+    # Resolve Chat Objects
     try:
         source_chat_obj = await client.get_chat(source_chat)
         dest_chat_obj = await client.get_chat(dest_chat)
@@ -544,10 +536,9 @@ async def run_copy_process(
     brand = get_config("brand_name", "@skillneast1")
     current_id = current_start
     copied_count = initial_copied_count
-    total_msgs = max(1, (last_id - start_id) + 1)
 
-    # Initial Live Dashboard message sent to user
-    initial_card, initial_keyboard = build_dashboard_text(
+    # 1. SEND INITIAL DASHBOARD DIRECTLY ON /copy
+    initial_card, initial_keyboard = render_dashboard(
         source_chat=str(source_chat),
         dest_chat=str(dest_chat),
         brand=brand,
@@ -555,7 +546,7 @@ async def run_copy_process(
         current_id=current_id,
         last_id=last_id,
         copied_count=copied_count,
-        status_text="INITIALIZING 🚀",
+        status_label="RUNNING 🟢",
         start_time=task_start_time,
     )
     dashboard_msg: Message = await notify_message.reply_text(
@@ -564,12 +555,12 @@ async def run_copy_process(
         disable_web_page_preview=True,
     )
 
-    last_ui_update_time = time.time()
+    last_dashboard_edit_time = time.time()
 
     while current_id <= last_id:
         if task_cancelled:
             save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "CANCELLED")
-            await notify_message.reply_text("🛑 <b>Task execution has been cancelled by user.</b>")
+            await notify_message.reply_text("🛑 <b>Task cancelled by user.</b>")
             task_running = False
             return
 
@@ -584,7 +575,6 @@ async def run_copy_process(
                 final_caption = process_caption(raw_caption)
 
                 try:
-                    # Direct Copy
                     if msg.media:
                         await client.copy_message(
                             chat_id=dest_chat_obj.id,
@@ -599,7 +589,7 @@ async def run_copy_process(
                         )
                     copied_count += 1
                 except Exception:
-                    # Fallback: Download & Re-upload (for Restricted Content)
+                    # Fallback for protected channels
                     if msg.media:
                         file_path = await client.download_media(msg)
                         if file_path:
@@ -622,10 +612,11 @@ async def run_copy_process(
             current_id += 1
             save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "RUNNING")
 
-            # Periodic Live Dashboard Update (Every 4 messages or every 8 seconds)
-            if (time.time() - last_ui_update_time >= 8) or (current_id % 4 == 0) or (current_id > last_id):
-                last_ui_update_time = time.time()
-                card_text, keyboard = build_dashboard_text(
+            # 2. REAL-TIME DASHBOARD AUTO-EDIT (Every 1-2 msgs or every 4 seconds)
+            now = time.time()
+            if (now - last_dashboard_edit_time >= 4) or (current_id > last_id):
+                last_dashboard_edit_time = now
+                updated_card, updated_keyboard = render_dashboard(
                     source_chat=str(source_chat),
                     dest_chat=str(dest_chat),
                     brand=brand,
@@ -633,11 +624,15 @@ async def run_copy_process(
                     current_id=min(current_id, last_id),
                     last_id=last_id,
                     copied_count=copied_count,
-                    status_text="RUNNING 🟢",
+                    status_label="RUNNING 🟢",
                     start_time=task_start_time,
                 )
                 try:
-                    await dashboard_msg.edit_text(card_text, reply_markup=keyboard, disable_web_page_preview=True)
+                    await dashboard_msg.edit_text(
+                        updated_card,
+                        reply_markup=updated_keyboard,
+                        disable_web_page_preview=True
+                    )
                 except (MessageNotModified, FloodWait, Exception):
                     pass
 
@@ -658,8 +653,8 @@ async def run_copy_process(
     task_running = False
     save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "COMPLETED")
 
-    # Final Completed Dashboard UI
-    final_card, final_keyboard = build_dashboard_text(
+    # 3. FINAL COMPLETED DASHBOARD VIEW
+    completed_card, completed_keyboard = render_dashboard(
         source_chat=str(source_chat),
         dest_chat=str(dest_chat),
         brand=brand,
@@ -667,20 +662,24 @@ async def run_copy_process(
         current_id=last_id,
         last_id=last_id,
         copied_count=copied_count,
-        status_text="COMPLETED 🎉",
+        status_label="COMPLETED 🎉",
         start_time=task_start_time,
     )
     try:
-        await dashboard_msg.edit_text(final_card, reply_markup=final_keyboard, disable_web_page_preview=True)
+        await dashboard_msg.edit_text(
+            completed_card,
+            reply_markup=completed_keyboard,
+            disable_web_page_preview=True
+        )
     except Exception:
-        await notify_message.reply_text(final_card, reply_markup=final_keyboard)
+        await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
 
-# ==================== MAIN APPLICATION RUNNER ====================
+# ==================== RUNNER ====================
 async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Live Dashboard Userbot is fully connected and ready!")
+    print("✅ Real-Time Dashboard Userbot is Online & Ready!")
     await start_web_server()
 
 if __name__ == "__main__":
