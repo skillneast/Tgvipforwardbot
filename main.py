@@ -16,6 +16,8 @@ from pyrogram.errors import (
     FloodWait,
     PeerIdInvalid,
 )
+from pyrogram.file_id import FileId
+from pyrogram.raw import functions, types
 from pyrogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -23,23 +25,23 @@ from pyrogram.types import (
     Message,
 )
 
+# Fix asyncio event loop for environments like Google Colab / Jupyter
 nest_asyncio.apply()
 
-# ==================== CONFIGURATION & ENVIRONMENT VARIABLES ====================
-API_ID_RAW = os.environ.get("API_ID")
-API_HASH = os.environ.get("API_HASH")
-SESSION_STRING = os.environ.get("SESSION_STRING")
+# ==================== CONFIGURATION & CREDENTIALS ====================
+API_ID = int(os.environ.get("API_ID", 33720317))
+API_HASH = os.environ.get("API_HASH", "145db99951f44490f134ac7446126630")
+SESSION_STRING = os.environ.get(
+    "SESSION_STRING",
+    "BQFSZo0AI9u3vxq2VRuJpcnzjr1DqBN6ADUOx8YiP14CO7Lmpqwx3fLFr-PKI0Dsw-sfaImZFWYPt9icc0U7GkLakeV9qCR2pXHUpSN6B6yDYg9EWYmCCCW8H6eDWwjwJLkDxHcDuvP7zFq5Idb1FzovTuow0SPL9engHMjM2FJi3i_wTYVwwknN9vvgZ2YdnzERY_MYXNvo7UZnD_1B8jXEx1U19PRYCHd9RWjpWltMX5fn3_5DgE72DOiPhx-qW4TfIrFu2GuozNyM0JVQdS7vQCR6mYusa7gJIjZt9n6e3CjGdq5plkgB098r0iNINQzIlPCp8aM0ULmxqV2E89hxEAyGqAAAAAIWPSnIAA"
+)
 DELAY_SECONDS = int(os.environ.get("DELAY_SECONDS", 3))
 PORT = int(os.environ.get("PORT", 8080))
 
-if not API_ID_RAW or not API_HASH or not SESSION_STRING:
-    raise ValueError("Missing critical Environment Variables: API_ID, API_HASH, or SESSION_STRING")
-
-API_ID = int(API_ID_RAW)
-DB_NAME = "userbot_data.db"
+DB_NAME = "userbot_production.db"
 CUSTOM_THUMB_PATH = "custom_thumb.jpg"
 
-# ==================== DATABASE INITIALIZATION & ACCESSORS ====================
+# ==================== DATABASE INITIALIZATION ====================
 def get_db_connection() -> sqlite3.Connection:
     return sqlite3.connect(DB_NAME, timeout=15)
 
@@ -64,12 +66,11 @@ def init_db():
             status TEXT
         )
     """)
-    # Set default brand name if not already present
     cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('brand_name', '@skillneast1')")
     conn.commit()
     conn.close()
 
-def get_config_val(key: str, default: Optional[str] = None) -> Optional[str]:
+def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT value FROM config WHERE key = ?", (key,))
@@ -77,7 +78,7 @@ def get_config_val(key: str, default: Optional[str] = None) -> Optional[str]:
     conn.close()
     return row[0] if row else default
 
-def set_config_val(key: str, value: str):
+def set_config(key: str, value: str):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, str(value)))
@@ -104,9 +105,9 @@ def get_progress():
 
 init_db()
 
-# ==================== PYROGRAM CLIENT & GLOBAL STATE ====================
+# ==================== PYROGRAM CLIENT & GLOBAL CACHE ====================
 app = Client(
-    "render_userbot_session",
+    "final_production_userbot",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -114,9 +115,9 @@ app = Client(
 
 task_running = False
 is_paused = False
-current_worker_task: Optional[asyncio.Task] = None
+cached_input_photo: Optional[types.InputPhoto] = None
 
-# ==================== HELPER FUNCTIONS ====================
+# ==================== HELPER & MTPROTO FUNCTIONS ====================
 def generate_progress_bar(percentage: float, length: int = 10) -> str:
     filled = int(round(length * (percentage / 100)))
     filled = max(0, min(length, filled))
@@ -124,7 +125,7 @@ def generate_progress_bar(percentage: float, length: int = 10) -> str:
     return "█" * filled + "░" * empty
 
 def process_caption(caption_text: str) -> str:
-    brand = get_config_val("brand_name", "@skillneast1")
+    brand = get_config("brand_name", "@skillneast1")
     if not caption_text:
         return f"Provided by {brand}"
 
@@ -136,23 +137,19 @@ def process_caption(caption_text: str) -> str:
 
 def parse_telegram_link(link: str) -> Tuple[Optional[int | str], Optional[int], Optional[int]]:
     link = link.strip()
-    # Private Channel Range
     p_range = re.search(r"t\.me/c/(\d+)/(\d+)-(\d+)", link)
     if p_range:
         return int("-100" + p_range.group(1)), int(p_range.group(2)), int(p_range.group(3))
 
-    # Private Channel Single
     p_single = re.search(r"t\.me/c/(\d+)/(\d+)", link)
     if p_single:
         start = int(p_single.group(2))
         return int("-100" + p_single.group(1)), start, start + 250000
 
-    # Public Channel Range
     pub_range = re.search(r"t\.me/([^/]+)/(\d+)-(\d+)", link)
     if pub_range:
         return pub_range.group(1), int(pub_range.group(2)), int(pub_range.group(3))
 
-    # Public Channel Single
     pub_single = re.search(r"t\.me/([^/]+)/(\d+)", link)
     if pub_single:
         start = int(pub_single.group(2))
@@ -168,7 +165,70 @@ async def sync_dialogs(client: Client) -> bool:
     except Exception:
         return False
 
-# ==================== DUMMY WEB SERVER (RENDER HEALTH CHECK) ====================
+async def get_or_upload_cover_photo(client: Client) -> Optional[types.InputPhoto]:
+    """Uploads the local custom thumbnail photo once to Telegram MTProto and caches the InputPhoto handle."""
+    global cached_input_photo
+    if cached_input_photo:
+        return cached_input_photo
+
+    if not os.path.exists(CUSTOM_THUMB_PATH):
+        return None
+
+    try:
+        input_file = await client.save_file(CUSTOM_THUMB_PATH)
+        res = await client.invoke(
+            functions.messages.UploadMedia(
+                peer=types.InputPeerSelf(),
+                media=types.InputMediaUploadedPhoto(file=input_file),
+            )
+        )
+        if hasattr(res, "photo") and isinstance(res.photo, types.Photo):
+            cached_input_photo = types.InputPhoto(
+                id=res.photo.id,
+                access_hash=res.photo.access_hash,
+                file_reference=res.photo.file_reference,
+            )
+            return cached_input_photo
+    except Exception as e:
+        print(f"⚠️ Error uploading cover photo: {e}")
+    return None
+
+async def send_video_with_instant_cover(
+    client: Client,
+    dest_peer,
+    msg: Message,
+    caption: str,
+    cover_photo: types.InputPhoto,
+) -> bool:
+    """Uses MTProto video_cover to instantly attach custom thumbnail to cloud video without downloading."""
+    try:
+        decoded = FileId.decode(msg.video.file_id)
+        input_doc = types.InputDocument(
+            id=decoded.media_id,
+            access_hash=decoded.access_hash,
+            file_reference=decoded.file_reference,
+        )
+
+        input_media = types.InputMediaDocument(
+            id=input_doc,
+            video_cover=cover_photo,
+            spoiler=bool(getattr(msg, "has_media_spoiler", False)),
+        )
+
+        await client.invoke(
+            functions.messages.SendMedia(
+                peer=dest_peer,
+                media=input_media,
+                message=caption,
+                random_id=client.rnd_id(),
+            )
+        )
+        return True
+    except Exception as e:
+        print(f"⚠️ Video cover MTProto fallback triggered: {e}")
+        return False
+
+# ==================== FASTAPI KEEP-ALIVE SERVER ====================
 web_app = FastAPI()
 
 @web_app.get("/")
@@ -180,7 +240,7 @@ async def health_check():
             "status": "online",
             "bot_running": task_running,
             "is_paused": is_paused,
-            "service": "Telegram Userbot"
+            "service": "Telegram Instant Userbot"
         }
     )
 
@@ -189,28 +249,28 @@ async def start_web_server():
     server = uvicorn.Server(config)
     await server.serve()
 
-# ==================== COMMAND HANDLERS & INLINE MENUS ====================
+# ==================== COMMAND HANDLERS ====================
 ALLOWED_FILTER = (filters.me | filters.private)
 
 @app.on_message(ALLOWED_FILTER & filters.command(["start", "help"], prefixes=["/", "."]))
 async def start_command(client: Client, message: Message):
-    target = get_config_val("target_chat", "❌ Not Set")
-    brand = get_config_val("brand_name", "@skillneast1")
+    target = get_config("target_chat", "❌ Not Configured")
+    brand = get_config("brand_name", "@skillneast1")
 
     welcome_text = (
-        "<b>🤖 Personal Content Forwarder Userbot</b>\n"
+        "<b>🤖 Telegram Content Forwarder Userbot</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Target Channel:</b> <code>{target}</code>\n"
-        f"🎨 <b>Current Brand:</b> <code>{brand}</code>\n\n"
+        f"🎨 <b>Active Brand Tag:</b> <code>{brand}</code>\n\n"
         "<b>📖 Available Commands:</b>\n"
-        "• <code>/copy &lt;link&gt;</code> — Start moving/copying messages\n"
-        "• <code>/settarget &lt;chat_id&gt;</code> — Configure target channel\n"
-        "• <code>/setbrand &lt;name&gt;</code> — Update caption brand name\n"
-        "• <code>/getbrand</code> — View active brand\n"
-        "• <code>/setthumb</code> — Reply to image to save as video thumbnail\n"
-        "• <code>/status</code> — Visual progress & task details\n"
-        "• <code>/pause</code> | <code>/resume</code> — Process state control\n"
-        "• <code>/sync</code> — Reload Telegram peer access caches\n"
+        "• <code>/copy &lt;link&gt;</code> — Start copying message range\n"
+        "• <code>/settarget &lt;id&gt;</code> — Set destination channel ID\n"
+        "• <code>/setbrand &lt;name&gt;</code> — Change caption brand tag\n"
+        "• <code>/getbrand</code> — Check current brand name\n"
+        "• <code>/setthumb</code> — Reply to a photo to set video cover\n"
+        "• <code>/status</code> — View live progress & metrics dashboard\n"
+        "• <code>/pause</code> | <code>/resume</code> — Process control\n"
+        "• <code>/sync</code> — Sync channel dialogs & peer cache\n"
         "━━━━━━━━━━━━━━━━━━━━━━"
     )
 
@@ -231,31 +291,31 @@ async def start_command(client: Client, message: Message):
 async def set_brand_command(client: Client, message: Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        current = get_config_val("brand_name", "@skillneast1")
-        await message.reply_text(f"ℹ️ Current Brand Name: <code>{current}</code>\n\nUsage: <code>/setbrand &lt;new_brand_or_username&gt;</code>")
+        current = get_config("brand_name", "@skillneast1")
+        await message.reply_text(f"ℹ️ <b>Current Brand:</b> <code>{current}</code>\n\nUsage: <code>/setbrand &lt;new_brand_name&gt;</code>")
         return
 
-    old_brand = get_config_val("brand_name", "@skillneast1")
+    old_brand = get_config("brand_name", "@skillneast1")
     new_brand = args[1].strip()
-    set_config_val("brand_name", new_brand)
+    set_config("brand_name", new_brand)
 
     await message.reply_text(
         f"<b>✅ Brand Name Updated Successfully!</b>\n\n"
-        f"<b>Old:</b> <code>{old_brand}</code>\n"
-        f"<b>New:</b> <code>{new_brand}</code>"
+        f"<b>Previous:</b> <code>{old_brand}</code>\n"
+        f"<b>New Brand:</b> <code>{new_brand}</code>"
     )
 
 @app.on_message(ALLOWED_FILTER & filters.command(["getbrand", "brand"], prefixes=["/", "."]))
 async def get_brand_command(client: Client, message: Message):
-    brand = get_config_val("brand_name", "@skillneast1")
-    await message.reply_text(f"🎨 <b>Current Brand:</b> <code>{brand}</code>")
+    brand = get_config("brand_name", "@skillneast1")
+    await message.reply_text(f"🎨 <b>Current Brand Name:</b> <code>{brand}</code>")
 
 @app.on_message(ALLOWED_FILTER & filters.command(["sync"], prefixes=["/", "."]))
 async def sync_command(client: Client, message: Message):
-    status_msg = await message.reply_text("🔄 <i>Syncing joined channels and resolving access hashes...</i>")
+    status_msg = await message.reply_text("🔄 <i>Syncing joined channels and resolving peer access hashes...</i>")
     success = await sync_dialogs(client)
     if success:
-        await status_msg.edit_text("<b>✅ All dialogs & peer hashes synced successfully!</b>")
+        await status_msg.edit_text("<b>✅ All joined channels synced into local cache!</b>")
     else:
         await status_msg.edit_text("<b>⚠️ Sync completed with non-fatal warnings.</b>")
 
@@ -263,26 +323,28 @@ async def sync_command(client: Client, message: Message):
 async def set_target_cmd(client: Client, message: Message):
     args = message.text.split()
     if len(args) < 2:
-        await message.reply_text("❌ <b>Error:</b> Target chat missing.\nUsage: <code>/settarget -100xxxxxxxxxx</code>")
+        await message.reply_text("❌ <b>Error:</b> Please provide Target Channel ID.\nExample: <code>/settarget -1004415448802</code>")
         return
 
     target_chat = args[1].strip()
-    set_config_val("target_chat", target_chat)
+    set_config("target_chat", target_chat)
     await message.reply_text(
         f"<b>✅ Target Channel Configured!</b>\n\n"
         f"🎯 <b>Channel ID:</b> <code>{target_chat}</code>\n"
-        f"<i>Ensure you have admin posting permissions in this channel.</i>"
+        f"<i>Make sure your account is an Admin with post permissions.</i>"
     )
 
 @app.on_message(ALLOWED_FILTER & filters.command(["setthumb"], prefixes=["/", "."]))
 async def set_thumb(client: Client, message: Message):
+    global cached_input_photo
     if message.reply_to_message and message.reply_to_message.photo:
         status_msg = await message.reply_text("📥 <i>Downloading and saving custom thumbnail...</i>")
         await client.download_media(message.reply_to_message.photo, file_name=CUSTOM_THUMB_PATH)
+        cached_input_photo = None  # Reset cache to force upload of new thumb
+        await get_or_upload_cover_photo(client)
         await status_msg.edit_text(
-            "<b>✅ Custom Thumbnail Saved!</b>\n\n"
-            "⚠️ <i>Note: This will only be applied to videos that ALREADY have an original thumbnail. "
-            "Videos without thumbnails will stay completely unchanged.</i>"
+            "<b>✅ Custom Thumbnail Configured!</b>\n\n"
+            "✨ <b>Smart Rule:</b> <i>This thumbnail will be applied instantly via video_cover ONLY to videos that already have an original thumbnail. Videos without thumbnails will be copied completely unchanged.</i>"
         )
     else:
         await message.reply_text("❌ <b>Error:</b> Please reply to an image with <code>/setthumb</code>.")
@@ -292,13 +354,13 @@ async def pause_task(client: Client, message: Message):
     global is_paused
     if task_running and not is_paused:
         is_paused = True
-        await message.reply_text("⏸️ <b>Task Paused Successfully.</b>\nUse <code>/resume</code> or inline buttons to continue.")
+        await message.reply_text("⏸️ <b>Task Paused Successfully.</b>\nUse <code>/resume</code> to continue processing.")
     else:
         await message.reply_text("❌ <b>No active copy task is currently running.</b>")
 
 @app.on_message(ALLOWED_FILTER & filters.command(["resume"], prefixes=["/", "."]))
 async def resume_task(client: Client, message: Message):
-    global is_paused, task_running, current_worker_task
+    global is_paused, task_running
     if task_running and is_paused:
         is_paused = False
         await message.reply_text("▶️ <b>Task Resumed. Continuing message processing...</b>")
@@ -307,10 +369,10 @@ async def resume_task(client: Client, message: Message):
         if saved and saved[6] in ["PAUSED", "RUNNING"]:
             source_chat, dest_chat, start_id, current_id, last_id, copied_count, _ = saved
             is_paused = False
-            current_worker_task = asyncio.create_task(
+            asyncio.create_task(
                 run_copy_process(client, message, source_chat, dest_chat, start_id, current_id, last_id, copied_count)
             )
-            await message.reply_text(f"▶️ <b>Resuming task from Message ID:</b> <code>{current_id}</code>")
+            await message.reply_text(f"▶️ <b>Resuming task from Checkpoint Message ID:</b> <code>{current_id}</code>")
         else:
             await message.reply_text("❌ <b>No paused or incomplete task found in database.</b>")
 
@@ -320,8 +382,8 @@ async def status_command(client: Client, message: Message):
 
 async def send_status_view(target_ctx: Message | CallbackQuery):
     saved = get_progress()
-    target_config = get_config_val("target_chat", "❌ Not Set")
-    brand = get_config_val("brand_name", "@skillneast1")
+    target_config = get_config("target_chat", "❌ Not Configured")
+    brand = get_config("brand_name", "@skillneast1")
 
     keyboard = InlineKeyboardMarkup([
         [
@@ -343,26 +405,27 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
         current_state = "PAUSED ⏸️" if is_paused else "ACTIVE 🟢"
 
         status_text = (
-            "<b>📊 Task Execution Status</b>\n"
+            "<b>📊 Live Task Progress Dashboard</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍 <b>Source:</b> <code>{source_chat}</code>\n"
-            f"🎯 <b>Target:</b> <code>{dest_chat}</code>\n"
-            f"🎨 <b>Brand:</b> <code>{brand}</code>\n"
-            f"🔢 <b>Current Message:</b> <code>{current_id}</code>\n"
-            f"🏁 <b>Target End:</b> <code>{last_id}</code>\n"
-            f"📦 <b>Total Copied:</b> <code>{copied_count}</code>\n"
-            f"⏳ <b>Remaining:</b> <code>{remaining}</code> msgs\n"
-            f"⚡ <b>State:</b> <code>{current_state}</code>\n\n"
+            f"📍 <b>Source Channel:</b> <code>{source_chat}</code>\n"
+            f"🎯 <b>Target Channel:</b> <code>{dest_chat}</code>\n"
+            f"🎨 <b>Brand Tag:</b> <code>{brand}</code>\n"
+            f"🔢 <b>Current Message ID:</b> <code>{current_id}</code>\n"
+            f"🏁 <b>Target End ID:</b> <code>{last_id}</code>\n"
+            f"📈 <b>Total Messages in Range:</b> <code>{total_msgs}</code>\n"
+            f"✅ <b>Successfully Copied:</b> <code>{copied_count}</code>\n"
+            f"⏳ <b>Remaining Messages:</b> <code>{remaining}</code>\n"
+            f"⚡ <b>Execution State:</b> <code>{current_state}</code>\n\n"
             f"<b>Progress:</b> <code>[{progress_bar}]</code> <b>{percentage}%</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━"
         )
     else:
         status_text = (
-            "<b>📊 Task Execution Status</b>\n"
+            "<b>📊 Live Task Progress Dashboard</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
             "ℹ️ <i>No task is actively running.</i>\n\n"
             f"🎯 <b>Configured Target:</b> <code>{target_config}</code>\n"
-            f"🎨 <b>Configured Brand:</b> <code>{brand}</code>\n"
+            f"🎨 <b>Active Brand:</b> <code>{brand}</code>\n"
             "━━━━━━━━━━━━━━━━━━━━━━"
         )
 
@@ -377,7 +440,7 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
 
 @app.on_callback_query()
 async def handle_callbacks(client: Client, callback: CallbackQuery):
-    global is_paused, task_running, current_worker_task
+    global is_paused, task_running
     data = callback.data
 
     if data == "btn_status":
@@ -401,7 +464,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
             if saved and saved[6] in ["PAUSED", "RUNNING"]:
                 source_chat, dest_chat, start_id, current_id, last_id, copied_count, _ = saved
                 is_paused = False
-                current_worker_task = asyncio.create_task(
+                asyncio.create_task(
                     run_copy_process(client, callback.message, source_chat, dest_chat, start_id, current_id, last_id, copied_count)
                 )
                 await callback.answer("Resumed from checkpoint!", show_alert=False)
@@ -412,51 +475,59 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
             await callback.answer("Task already running.", show_alert=True)
 
     elif data == "btn_brand":
-        brand = get_config_val("brand_name", "@skillneast1")
-        await callback.answer(f"Current Brand: {brand}", show_alert=True)
+        brand = get_config("brand_name", "@skillneast1")
+        await callback.answer(f"Active Brand: {brand}", show_alert=True)
 
 @app.on_message(ALLOWED_FILTER & filters.command(["copy"], prefixes=["/", "."]))
 async def start_copy_command(client: Client, message: Message):
-    global task_running, is_paused, current_worker_task
+    global task_running, is_paused
 
     if task_running:
         await message.reply_text("⚠️ <b>A task is already running!</b> Use <code>/status</code> or <code>/pause</code>.")
         return
 
-    dest_chat = get_config_val("target_chat")
+    dest_chat = get_config("target_chat")
     if not dest_chat:
         await message.reply_text("❌ <b>Target Channel Not Configured!</b>\nSet it using: <code>/settarget &lt;channel_id&gt;</code>")
         return
 
     args = message.text.split()
     if len(args) < 2:
-        await message.reply_text("❌ <b>Usage:</b> <code>/copy &lt;telegram_link&gt;</code>\nExample: <code>/copy https://t.me/c/1234567890/100-200</code>")
+        await message.reply_text(
+            "❌ <b>Usage:</b> <code>/copy &lt;telegram_link&gt;</code>\n"
+            "Example: <code>/copy https://t.me/c/4429284952/134062-134080</code>"
+        )
         return
 
     source_chat, start_msg_id, end_msg_id = parse_telegram_link(args[1])
     if not source_chat or not start_msg_id or not end_msg_id:
-        await message.reply_text("❌ <b>Invalid Telegram Message Link!</b> Please supply a valid single or range link.")
+        await message.reply_text("❌ <b>Invalid Telegram Link!</b> Please supply a valid range or single message link.")
         return
 
+    total_msgs = (end_msg_id - start_msg_id) + 1
+    brand = get_config("brand_name", "@skillneast1")
     is_paused = False
     save_progress(str(source_chat), str(dest_chat), start_msg_id, start_msg_id, end_msg_id, 0, "RUNNING")
 
     start_text = (
-        "<b>🚀 Initializing Task Execution</b>\n"
+        "<b>🚀 Initializing Range Copy Process</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📍 <b>Source:</b> <code>{source_chat}</code>\n"
-        f"🎯 <b>Target:</b> <code>{dest_chat}</code>\n"
-        f"🔢 <b>Start ID:</b> <code>{start_msg_id}</code>\n"
-        f"🏁 <b>End ID:</b> <code>{end_msg_id}</code>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━"
+        f"📍 <b>Source Channel:</b> <code>{source_chat}</code>\n"
+        f"🎯 <b>Target Channel:</b> <code>{dest_chat}</code>\n"
+        f"🎨 <b>Brand Tag:</b> <code>{brand}</code>\n"
+        f"🔢 <b>Start Message ID:</b> <code>{start_msg_id}</code>\n"
+        f"🏁 <b>End Message ID:</b> <code>{end_msg_id}</code>\n"
+        f"📦 <b>Total Messages to Process:</b> <code>{total_msgs}</code>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>Processing messages continuously...</i>"
     )
     await message.reply_text(start_text)
 
-    current_worker_task = asyncio.create_task(
+    asyncio.create_task(
         run_copy_process(client, message, source_chat, dest_chat, start_msg_id, start_msg_id, end_msg_id, 0)
     )
 
-# ==================== CORE ASYNC WORKER LOOP ====================
+# ==================== MAIN WORKER LOOP ====================
 async def run_copy_process(
     client: Client,
     notify_message: Message,
@@ -471,7 +542,7 @@ async def run_copy_process(
     task_running = True
     is_paused = False
 
-    # Resolve Peers
+    # Resolve Chat Objects & Peer Hashes
     try:
         source_chat_obj = await client.get_chat(source_chat)
         dest_chat_obj = await client.get_chat(dest_chat)
@@ -481,7 +552,7 @@ async def run_copy_process(
             source_chat_obj = await client.get_chat(source_chat)
             dest_chat_obj = await client.get_chat(dest_chat)
         except Exception as e:
-            await notify_message.reply_text(f"❌ <b>Peer Error:</b> <code>{e}</code>\nCheck if account is a member/admin in the chats.")
+            await notify_message.reply_text(f"❌ <b>Peer Error:</b> <code>{e}</code>\nCheck if your account is a member in source and admin in target.")
             task_running = False
             return
     except Exception as e:
@@ -489,8 +560,13 @@ async def run_copy_process(
         task_running = False
         return
 
+    # Pre-fetch Destination Raw Peer and Cover Photo
+    dest_peer = await client.resolve_peer(dest_chat_obj.id)
+    cover_photo = await get_or_upload_cover_photo(client)
+
     current_id = current_start
     copied_count = initial_copied_count
+    total_msgs = max(1, (last_id - start_id) + 1)
 
     while current_id <= last_id:
         while is_paused:
@@ -504,21 +580,30 @@ async def run_copy_process(
                 final_caption = process_caption(raw_caption)
 
                 try:
-                    # ==================== SMART THUMBNAIL LOGIC ====================
+                    # ==================== VIDEO_COVER & SMART THUMBNAIL LOGIC ====================
                     if msg.video:
-                        # Strictly verify if the original video actually possessed a thumbnail
+                        # Check strictly if the original video actually has an original thumbnail
                         has_original_thumb = bool(msg.video.thumbs or msg.video.thumbnail)
 
-                        if has_original_thumb and os.path.exists(CUSTOM_THUMB_PATH):
-                            # Replace thumbnail on existing cloud video file without downloading
-                            await client.send_video(
-                                chat_id=dest_chat_obj.id,
-                                video=msg.video.file_id,
+                        if has_original_thumb and cover_photo:
+                            # Apply custom cover photo instantly without downloading video
+                            success = await send_video_with_instant_cover(
+                                client=client,
+                                dest_peer=dest_peer,
+                                msg=msg,
                                 caption=final_caption,
-                                thumb=CUSTOM_THUMB_PATH,
+                                cover_photo=cover_photo,
                             )
+                            if not success:
+                                # Fallback if raw MTProto cover fails
+                                await client.copy_message(
+                                    chat_id=dest_chat_obj.id,
+                                    from_chat_id=source_chat_obj.id,
+                                    message_id=msg.id,
+                                    caption=final_caption,
+                                )
                         else:
-                            # Forward/copy directly as-is (thumbnail-less or no custom thumbnail saved)
+                            # If no original thumb exists or no custom thumb set, copy video as-is
                             await client.copy_message(
                                 chat_id=dest_chat_obj.id,
                                 from_chat_id=source_chat_obj.id,
@@ -575,11 +660,12 @@ async def run_copy_process(
 
         except (ChatWriteForbidden, ChatAdminRequired):
             await notify_message.reply_text(
-                f"❌ <b>Permission Denied!</b> Ensure the account is an <b>ADMIN</b> with full posting rights in target: <code>{dest_chat}</code>"
+                f"❌ <b>Permission Denied!</b> Ensure your account is an <b>ADMIN</b> with post permissions in: <code>{dest_chat}</code>"
             )
             task_running = False
             save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "STOPPED")
             return
+
         except FloodWait as e:
             await notify_message.reply_text(f"⏳ <b>FloodWait Encountered:</b> Sleeping for {e.value} seconds...")
             await asyncio.sleep(e.value)
@@ -589,17 +675,23 @@ async def run_copy_process(
 
     task_running = False
     save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "COMPLETED")
-    await notify_message.reply_text(f"<b>✅ Copy Task Completed Successfully!</b>\nTotal Messages Processed: <code>{copied_count}</code>")
 
-# ==================== MAIN APPLICATION RUNNER ====================
+    completed_text = (
+        "<b>🎉 Range Copy Task Completed!</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📦 <b>Total Messages in Range:</b> <code>{total_msgs}</code>\n"
+        f"✅ <b>Successfully Copied:</b> <code>{copied_count}</code>\n"
+        f"🎯 <b>Target Channel:</b> <code>{dest_chat}</code>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━"
+    )
+    await notify_message.reply_text(completed_text)
+
+# ==================== RUNNER ====================
 async def main():
-    # Start Pyrogram userbot client
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
     print("✅ Userbot is fully connected and ready!")
-
-    # Start FastAPI Web Server concurrently in the same asyncio loop
     await start_web_server()
 
 if __name__ == "__main__":
