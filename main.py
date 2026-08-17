@@ -35,9 +35,9 @@ SESSION_STRING = os.environ.get(
 )
 DELAY_SECONDS = int(os.environ.get("DELAY_SECONDS", 3))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_live_dashboard.db"
+DB_NAME = "final_dashboard_clean.db"
 
-# ==================== DATABASE ====================
+# ==================== DATABASE SETUP ====================
 def get_db():
     return sqlite3.connect(DB_NAME, timeout=15)
 
@@ -103,7 +103,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "final_dashboard_userbot",
+    "final_clean_userbot_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -146,7 +146,7 @@ def render_dashboard(
     percentage = round((processed_count / total_msgs) * 100, 1)
     bar = generate_progress_bar(percentage)
 
-    # Time & Speed
+    # Time & Speed calculations
     elapsed_sec = max(0.1, time.time() - start_time) if start_time > 0 else 0.1
     elapsed_str = format_time(elapsed_sec)
     
@@ -233,7 +233,7 @@ async def sync_dialogs(client: Client) -> bool:
     except Exception:
         return False
 
-# ==================== FASTAPI WEB SERVER ====================
+# ==================== DUMMY WEB SERVER ====================
 web_app = FastAPI()
 
 @web_app.get("/")
@@ -267,7 +267,7 @@ async def start_command(client: Client, message: Message):
         f"🎯 <b>Target Channel:</b> <code>{target}</code>\n"
         f"🎨 <b>Active Brand:</b> <code>{brand}</code>\n\n"
         "<b>📖 Available Commands:</b>\n"
-        "• <code>/copy &lt;link&gt;</code> — Start copy with Real-Time Dashboard\n"
+        "• <code>/copy &lt;link&gt;</code> — Start copy directly with Real-Time Dashboard\n"
         "• <code>/settarget &lt;id&gt;</code> — Set destination channel ID\n"
         "• <code>/setbrand &lt;name&gt;</code> — Change caption brand watermark\n"
         "• <code>/getbrand</code> — Check current brand name\n"
@@ -377,7 +377,7 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
 
     if task_running or (saved and saved[6] in ["RUNNING", "PAUSED"]):
         source_chat, dest_chat, start_id, current_id, last_id, copied_count, status = saved
-        status_label = "PAUSED ⏸️" if is_paused else "ACTIVE 🟢"
+        status_label = "PAUSED ⏸️" if is_paused else "RUNNING 🟢"
         card_text, keyboard = render_dashboard(
             source_chat=source_chat,
             dest_chat=dest_chat,
@@ -494,12 +494,12 @@ async def start_copy_command(client: Client, message: Message):
     task_start_time = time.time()
     save_progress(str(source_chat), str(dest_chat), start_msg_id, start_msg_id, end_msg_id, 0, "RUNNING")
 
-    # Start Copy Task with Live Dashboard
+    # Launch worker which sends the LIVE DASHBOARD instantly
     asyncio.create_task(
         run_copy_process(client, message, source_chat, dest_chat, start_msg_id, start_msg_id, end_msg_id, 0)
     )
 
-# ==================== CORE WORKER WITH LIVE EDIT DASHBOARD ====================
+# ==================== CORE WORKER WITH REAL-TIME DASHBOARD ====================
 async def run_copy_process(
     client: Client,
     notify_message: Message,
@@ -537,7 +537,7 @@ async def run_copy_process(
     current_id = current_start
     copied_count = initial_copied_count
 
-    # 1. SEND INITIAL DASHBOARD DIRECTLY ON /copy
+    # 1. SEND LIVE DASHBOARD DIRECTLY ON /copy
     initial_card, initial_keyboard = render_dashboard(
         source_chat=str(source_chat),
         dest_chat=str(dest_chat),
@@ -589,7 +589,6 @@ async def run_copy_process(
                         )
                     copied_count += 1
                 except Exception:
-                    # Fallback for protected channels
                     if msg.media:
                         file_path = await client.download_media(msg)
                         if file_path:
@@ -612,9 +611,9 @@ async def run_copy_process(
             current_id += 1
             save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "RUNNING")
 
-            # 2. REAL-TIME DASHBOARD AUTO-EDIT (Every 1-2 msgs or every 4 seconds)
+            # 2. REAL-TIME DASHBOARD AUTO-EDIT (Every 3-4 seconds or on completion)
             now = time.time()
-            if (now - last_dashboard_edit_time >= 4) or (current_id > last_id):
+            if (now - last_dashboard_edit_time >= 3.5) or (current_id > last_id):
                 last_dashboard_edit_time = now
                 updated_card, updated_keyboard = render_dashboard(
                     source_chat=str(source_chat),
@@ -679,7 +678,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Real-Time Dashboard Userbot is Online & Ready!")
+    print("✅ Live Dashboard Userbot is Online & Ready!")
     await start_web_server()
 
 if __name__ == "__main__":
