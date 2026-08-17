@@ -35,7 +35,7 @@ SESSION_STRING = os.environ.get(
 )
 DELAY_SECONDS = int(os.environ.get("DELAY_SECONDS", 3))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_dashboard_clean.db"
+DB_NAME = "railway_live_dashboard.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -103,7 +103,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "final_clean_userbot_session",
+    "railway_dashboard_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -611,7 +611,7 @@ async def run_copy_process(
             current_id += 1
             save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "RUNNING")
 
-            # 2. REAL-TIME DASHBOARD AUTO-EDIT (Every 3-4 seconds or on completion)
+            # 2. REAL-TIME DASHBOARD AUTO-EDIT (Every 3-4 seconds)
             now = time.time()
             if (now - last_dashboard_edit_time >= 3.5) or (current_id > last_id):
                 last_dashboard_edit_time = now
@@ -678,7 +678,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Live Dashboard Userbot is Online & Ready!")
+    print("✅ Live Dashboard Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
