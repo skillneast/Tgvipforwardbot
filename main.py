@@ -1,5 +1,6 @@
 import asyncio
 import os
+import random
 import re
 import sqlite3
 import time
@@ -24,6 +25,7 @@ from pyrogram.types import (
     Message,
 )
 
+# Asyncio Event Loop Fix
 nest_asyncio.apply()
 
 # ==================== CONFIGURATION ====================
@@ -35,7 +37,7 @@ SESSION_STRING = os.environ.get(
 )
 DELAY_SECONDS = int(os.environ.get("DELAY_SECONDS", 3))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_ld_cancel_dashboard.db"
+DB_NAME = "final_perfect_userbot.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -92,7 +94,6 @@ def save_progress(source_chat: str, dest_chat: str, start_id: int, current_id: i
     conn.close()
 
 def delete_task_progress():
-    """Completely deletes saved progress from DB on cancel so resume cannot be used."""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM task_state WHERE id = 1")
@@ -123,7 +124,7 @@ task_cancelled = False
 task_start_time = 0.0
 active_dashboard_msg: Optional[Message] = None
 
-# ==================== UI & CALCULATION HELPERS ====================
+# ==================== UI & CAPTION LOGIC ====================
 def format_time(seconds: float) -> str:
     seconds = int(max(0, seconds))
     hours, remainder = divmod(seconds, 3600)
@@ -137,6 +138,38 @@ def generate_progress_bar(percentage: float, length: int = 12) -> str:
     filled = max(0, min(length, filled))
     empty = length - filled
     return "█" * filled + "░" * empty
+
+def process_caption(caption_text: str, is_pure_text: bool = False) -> str:
+    """
+    1. If @username exists -> 100% replace all with current brand.
+    2. If short title/header text -> keep clean, no watermark added.
+    3. If clean caption or empty media -> True random 40% chance of adding watermark.
+    """
+    brand = get_config("brand_name", "@skillneast1")
+
+    # Rule 1: Always replace external @usernames with brand
+    if caption_text:
+        usernames = re.findall(r"@[a-zA-Z0-9_]+", caption_text)
+        if usernames:
+            return re.sub(r"@[a-zA-Z0-9_]+", brand, caption_text)
+
+    # Rule 2: Short text / header protection
+    if is_pure_text and caption_text:
+        clean_txt = caption_text.strip()
+        if len(clean_txt) <= 30 or clean_txt.lower() in ["welcome", "complete", "notes", "index", "module"]:
+            return caption_text
+
+    # Rule 3: True Random 40% Roll
+    should_brand = random.random() < 0.40
+
+    if should_brand:
+        if caption_text:
+            return f"{caption_text}\n\nProvided by {brand}"
+        else:
+            return f"Provided by {brand}"
+    else:
+        # 60% chance: clean without watermark
+        return caption_text if caption_text else ""
 
 def render_dashboard(
     source_chat: str,
@@ -194,23 +227,12 @@ def render_dashboard(
             InlineKeyboardButton("▶️ Resume", callback_data="btn_resume")
         ],
         [
-            InlineKeyboardButton("🔄 Refresh", callback_data="btn_status"),
+            InlineKeyboardButton("🔄 Live Refresh (/ld)", callback_data="btn_status"),
             InlineKeyboardButton("🛑 Cancel Task", callback_data="btn_stop")
         ]
     ])
 
     return card, keyboard
-
-def process_caption(caption_text: str) -> str:
-    brand = get_config("brand_name", "@skillneast1")
-    if not caption_text:
-        return f"Provided by {brand}"
-
-    usernames = re.findall(r"@[a-zA-Z0-9_]+", caption_text)
-    if usernames:
-        return re.sub(r"@[a-zA-Z0-9_]+", brand, caption_text)
-    else:
-        return f"{caption_text}\n\nProvided by {brand}"
 
 def parse_telegram_link(link: str) -> Tuple[Optional[int | str], Optional[int], Optional[int]]:
     link = link.strip()
@@ -242,7 +264,7 @@ async def sync_dialogs(client: Client) -> bool:
     except Exception:
         return False
 
-# ==================== DUMMY WEB SERVER ====================
+# ==================== DUMMY WEB SERVER (FOR 24/7) ====================
 web_app = FastAPI()
 
 @web_app.get("/")
@@ -534,12 +556,12 @@ async def start_copy_command(client: Client, message: Message):
     task_start_time = time.time()
     save_progress(str(source_chat), str(dest_chat), start_msg_id, start_msg_id, end_msg_id, 0, "RUNNING")
 
-    # Launch worker which sends the LIVE DASHBOARD instantly
+    # Start copy task with live dashboard
     asyncio.create_task(
         run_copy_process(client, message, source_chat, dest_chat, start_msg_id, start_msg_id, end_msg_id, 0)
     )
 
-# ==================== CORE WORKER WITH LIVE EDIT DASHBOARD ====================
+# ==================== MAIN WORKER LOOP ====================
 async def run_copy_process(
     client: Client,
     notify_message: Message,
@@ -616,7 +638,8 @@ async def run_copy_process(
             msg: Message = await client.get_messages(source_chat_obj.id, current_id)
             if msg and not msg.empty and not msg.service:
                 raw_caption = msg.caption or msg.text or ""
-                final_caption = process_caption(raw_caption)
+                is_pure_text = bool(msg.text and not msg.media)
+                final_caption = process_caption(raw_caption, is_pure_text=is_pure_text)
 
                 try:
                     if msg.media:
@@ -726,7 +749,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Real-Time Dashboard Userbot is Online & Ready!")
+    print("✅ Real-Time Dashboard Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
