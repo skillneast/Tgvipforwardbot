@@ -18,6 +18,8 @@ from pyrogram.errors import (
     MessageNotModified,
     PeerIdInvalid,
 )
+from pyrogram.file_id import FileId
+from pyrogram.raw import functions, types
 from pyrogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -25,7 +27,7 @@ from pyrogram.types import (
     Message,
 )
 
-# Asyncio Event Loop Fix
+# Asyncio Event Loop Fix for Jupyter / Colab / Async runners
 nest_asyncio.apply()
 
 # ==================== CONFIGURATION ====================
@@ -37,7 +39,8 @@ SESSION_STRING = os.environ.get(
 )
 DELAY_SECONDS = int(os.environ.get("DELAY_SECONDS", 3))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_perfect_userbot.db"
+DB_NAME = "final_complete_dashboard_userbot.db"
+CUSTOM_THUMB_PATH = "custom_thumb.jpg"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -61,6 +64,10 @@ def init_db():
             current_id INTEGER,
             last_id INTEGER,
             copied_count INTEGER,
+            videos_count INTEGER,
+            thumbs_applied_count INTEGER,
+            texts_count INTEGER,
+            branded_count INTEGER,
             status TEXT
         )
     """)
@@ -83,13 +90,31 @@ def set_config(key: str, value: str):
     conn.commit()
     conn.close()
 
-def save_progress(source_chat: str, dest_chat: str, start_id: int, current_id: int, last_id: int, copied_count: int, status: str):
+def save_progress(
+    source_chat: str,
+    dest_chat: str,
+    start_id: int,
+    current_id: int,
+    last_id: int,
+    copied_count: int,
+    videos_count: int,
+    thumbs_applied_count: int,
+    texts_count: int,
+    branded_count: int,
+    status: str,
+):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT OR REPLACE INTO task_state (id, source_chat, dest_chat, start_id, current_id, last_id, copied_count, status)
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?)
-    """, (str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, status))
+        INSERT OR REPLACE INTO task_state (
+            id, source_chat, dest_chat, start_id, current_id, last_id,
+            copied_count, videos_count, thumbs_applied_count, texts_count, branded_count, status
+        )
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        str(source_chat), str(dest_chat), start_id, current_id, last_id,
+        copied_count, videos_count, thumbs_applied_count, texts_count, branded_count, status
+    ))
     conn.commit()
     conn.close()
 
@@ -103,7 +128,11 @@ def delete_task_progress():
 def get_progress():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT source_chat, dest_chat, start_id, current_id, last_id, copied_count, status FROM task_state WHERE id = 1")
+    cursor.execute("""
+        SELECT source_chat, dest_chat, start_id, current_id, last_id,
+               copied_count, videos_count, thumbs_applied_count, texts_count, branded_count, status
+        FROM task_state WHERE id = 1
+    """)
     row = cursor.fetchone()
     conn.close()
     return row
@@ -112,7 +141,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT & GLOBAL STATE ====================
 app = Client(
-    "final_userbot_session",
+    "final_complete_userbot_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -123,8 +152,9 @@ is_paused = False
 task_cancelled = False
 task_start_time = 0.0
 active_dashboard_msg: Optional[Message] = None
+cached_input_photo: Optional[types.InputPhoto] = None
 
-# ==================== UI & CAPTION LOGIC ====================
+# ==================== UI & CALCULATION HELPERS ====================
 def format_time(seconds: float) -> str:
     seconds = int(max(0, seconds))
     hours, remainder = divmod(seconds, 3600)
@@ -139,37 +169,36 @@ def generate_progress_bar(percentage: float, length: int = 12) -> str:
     empty = length - filled
     return "█" * filled + "░" * empty
 
-def process_caption(caption_text: str, is_pure_text: bool = False) -> str:
+def process_caption(caption_text: str, is_pure_text: bool = False) -> Tuple[str, bool]:
     """
-    1. If @username exists -> 100% replace all with current brand.
-    2. If short title/header text -> keep clean, no watermark added.
+    1. If @username exists -> 100% replace with current brand watermark (branded = True).
+    2. If short title/header text -> keep clean without watermark (branded = False).
     3. If clean caption or empty media -> True random 40% chance of adding watermark.
     """
     brand = get_config("brand_name", "@skillneast1")
 
-    # Rule 1: Always replace external @usernames with brand
+    # Rule 1: Always replace external usernames
     if caption_text:
         usernames = re.findall(r"@[a-zA-Z0-9_]+", caption_text)
         if usernames:
-            return re.sub(r"@[a-zA-Z0-9_]+", brand, caption_text)
+            return re.sub(r"@[a-zA-Z0-9_]+", brand, caption_text), True
 
-    # Rule 2: Short text / header protection
+    # Rule 2: Short text / title protection
     if is_pure_text and caption_text:
         clean_txt = caption_text.strip()
         if len(clean_txt) <= 30 or clean_txt.lower() in ["welcome", "complete", "notes", "index", "module"]:
-            return caption_text
+            return caption_text, False
 
     # Rule 3: True Random 40% Roll
     should_brand = random.random() < 0.40
 
     if should_brand:
         if caption_text:
-            return f"{caption_text}\n\nProvided by {brand}"
+            return f"{caption_text}\n\nProvided by {brand}", True
         else:
-            return f"Provided by {brand}"
+            return f"Provided by {brand}", True
     else:
-        # 60% chance: clean without watermark
-        return caption_text if caption_text else ""
+        return caption_text if caption_text else "", False
 
 def render_dashboard(
     source_chat: str,
@@ -179,6 +208,10 @@ def render_dashboard(
     current_id: int,
     last_id: int,
     copied_count: int,
+    videos_count: int,
+    thumbs_applied_count: int,
+    texts_count: int,
+    branded_count: int,
     status_label: str,
     start_time: float,
 ) -> Tuple[str, InlineKeyboardMarkup]:
@@ -191,7 +224,7 @@ def render_dashboard(
     # Time & Speed calculations
     elapsed_sec = max(0.1, time.time() - start_time) if start_time > 0 else 0.1
     elapsed_str = format_time(elapsed_sec)
-    
+
     speed_per_sec = processed_count / elapsed_sec if elapsed_sec > 0 else 0
     speed_per_min = round(speed_per_sec * 60, 1)
 
@@ -206,13 +239,19 @@ def render_dashboard(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source Chat:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target Chat:</b> <code>{dest_chat}</code>\n"
-        f"🎨 <b>Brand Watermark:</b> <code>{brand}</code>\n"
+        f"🎨 <b>Brand Tag:</b> <code>{brand}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 <b>PROGRESS:</b> <code>[{bar}]</code> <b>{percentage}%</b>\n\n"
         f"🔢 <b>Current Message ID:</b> <code>{current_id}</code> / <code>{last_id}</code>\n"
         f"📦 <b>Total in Range:</b> <code>{total_msgs}</code> msgs\n"
-        f"✅ <b>Successfully Copied:</b> <code>{copied_count}</code>\n"
-        f"⏳ <b>Remaining to Process:</b> <code>{remaining_msgs}</code> msgs\n"
+        f"✅ <b>Processed / Copied:</b> <code>{copied_count}</code>\n"
+        f"⏳ <b>Remaining to Copy:</b> <code>{remaining_msgs}</code> msgs\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>📂 MEDIA BREAKDOWN:</b>\n"
+        f"• 🎥 <b>Total Videos:</b> <code>{videos_count}</code>\n"
+        f"• 🖼️ <b>Thumbnails Applied:</b> <code>{thumbs_applied_count}</code>\n"
+        f"• 📝 <b>Text / Other Files:</b> <code>{texts_count}</code>\n"
+        f"• 🏷️ <b>Branded Captions:</b> <code>{branded_count}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"⏱️ <b>Elapsed Time:</b> <code>{elapsed_str}</code>\n"
         f"⌛ <b>Estimated Time (ETA):</b> <code>{eta_str}</code>\n"
@@ -264,7 +303,70 @@ async def sync_dialogs(client: Client) -> bool:
     except Exception:
         return False
 
-# ==================== DUMMY WEB SERVER (FOR 24/7) ====================
+async def get_or_upload_cover_photo(client: Client) -> Optional[types.InputPhoto]:
+    """Uploads the local custom thumbnail photo once to Telegram MTProto and caches the InputPhoto handle."""
+    global cached_input_photo
+    if cached_input_photo:
+        return cached_input_photo
+
+    if not os.path.exists(CUSTOM_THUMB_PATH):
+        return None
+
+    try:
+        input_file = await client.save_file(CUSTOM_THUMB_PATH)
+        res = await client.invoke(
+            functions.messages.UploadMedia(
+                peer=types.InputPeerSelf(),
+                media=types.InputMediaUploadedPhoto(file=input_file),
+            )
+        )
+        if hasattr(res, "photo") and isinstance(res.photo, types.Photo):
+            cached_input_photo = types.InputPhoto(
+                id=res.photo.id,
+                access_hash=res.photo.access_hash,
+                file_reference=res.photo.file_reference,
+            )
+            return cached_input_photo
+    except Exception as e:
+        print(f"⚠️ Error uploading cover photo: {e}")
+    return None
+
+async def send_video_with_instant_cover(
+    client: Client,
+    dest_peer,
+    msg: Message,
+    caption: str,
+    cover_photo: types.InputPhoto,
+) -> bool:
+    """Uses MTProto video_cover to instantly attach custom thumbnail to cloud video without downloading."""
+    try:
+        decoded = FileId.decode(msg.video.file_id)
+        input_doc = types.InputDocument(
+            id=decoded.media_id,
+            access_hash=decoded.access_hash,
+            file_reference=decoded.file_reference,
+        )
+
+        input_media = types.InputMediaDocument(
+            id=input_doc,
+            video_cover=cover_photo,
+            spoiler=bool(getattr(msg, "has_media_spoiler", False)),
+        )
+
+        await client.invoke(
+            functions.messages.SendMedia(
+                peer=dest_peer,
+                media=input_media,
+                message=caption,
+                random_id=client.rnd_id(),
+            )
+        )
+        return True
+    except Exception as e:
+        print(f"⚠️ Video cover MTProto fallback triggered: {e}")
+        return False
+
+# ==================== FASTAPI WEB SERVER (24/7 KEEP-ALIVE) ====================
 web_app = FastAPI()
 
 @web_app.get("/")
@@ -275,7 +377,8 @@ async def health_check():
         content={
             "status": "online",
             "task_running": task_running,
-            "is_paused": is_paused
+            "is_paused": is_paused,
+            "service": "Advanced Live Dashboard Userbot"
         }
     )
 
@@ -306,6 +409,7 @@ async def start_command(client: Client, message: Message):
         "• <code>/settarget &lt;id&gt;</code> — Set destination channel ID\n"
         "• <code>/setbrand &lt;name&gt;</code> — Change caption brand watermark\n"
         "• <code>/getbrand</code> — Check current brand name\n"
+        "• <code>/setthumb</code> — Reply to a photo to set custom thumbnail\n"
         "• <code>/sync</code> — Sync channel dialogs & access hashes\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -325,6 +429,24 @@ async def start_command(client: Client, message: Message):
     ])
 
     await message.reply_text(welcome_text, reply_markup=keyboard, disable_web_page_preview=True)
+
+@app.on_message(ALLOWED_FILTER & filters.command(["setthumb"], prefixes=["/", "."]))
+async def set_thumb(client: Client, message: Message):
+    global cached_input_photo
+    if message.reply_to_message and message.reply_to_message.photo:
+        status_msg = await message.reply_text("📥 <i>Downloading and caching custom thumbnail...</i>")
+        await client.download_media(message.reply_to_message.photo, file_name=CUSTOM_THUMB_PATH)
+        cached_input_photo = None
+        await get_or_upload_cover_photo(client)
+        await status_msg.edit_text(
+            "<b>✅ Custom Thumbnail Saved & Cached!</b>\n\n"
+            "✨ <b>Combined Rule Active:</b>\n"
+            "• Videos with original thumbnails $\\rightarrow$ 100% custom thumbnail.\n"
+            "• Clean videos in the 40% brand pool $\\rightarrow$ Custom thumbnail attached.\n"
+            "• Clean videos in the 60% pool $\\rightarrow$ Left original without thumbnail."
+        )
+    else:
+        await message.reply_text("❌ <b>Error:</b> Please reply to an image with <code>/setthumb</code>.")
 
 @app.on_message(ALLOWED_FILTER & filters.command(["cancel", "stop"], prefixes=["/", "."]))
 async def cancel_command(client: Client, message: Message):
@@ -353,8 +475,11 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
     target_config = get_config("target_chat", "❌ Not Configured")
     brand = get_config("brand_name", "@skillneast1")
 
-    if task_running or (saved and saved[6] in ["RUNNING", "PAUSED"]):
-        source_chat, dest_chat, start_id, current_id, last_id, copied_count, status = saved
+    if task_running or (saved and saved[11] in ["RUNNING", "PAUSED"]):
+        (
+            source_chat, dest_chat, start_id, current_id, last_id,
+            copied_count, videos_count, thumbs_applied_count, texts_count, branded_count, status
+        ) = saved
         status_label = "PAUSED ⏸️" if is_paused else "RUNNING 🟢"
         card_text, keyboard = render_dashboard(
             source_chat=source_chat,
@@ -364,6 +489,10 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
             current_id=current_id,
             last_id=last_id,
             copied_count=copied_count,
+            videos_count=videos_count,
+            thumbs_applied_count=thumbs_applied_count,
+            texts_count=texts_count,
+            branded_count=branded_count,
             status_label=status_label,
             start_time=task_start_time,
         )
@@ -408,13 +537,19 @@ async def resume_task(client: Client, message: Message):
         await message.reply_text("▶️ <b>Task Resumed. Continuing message processing...</b>")
     elif not task_running:
         saved = get_progress()
-        if saved and saved[6] == "PAUSED":
-            source_chat, dest_chat, start_id, current_id, last_id, copied_count, _ = saved
+        if saved and saved[11] == "PAUSED":
+            (
+                source_chat, dest_chat, start_id, current_id, last_id,
+                copied_count, videos_count, thumbs_applied_count, texts_count, branded_count, _
+            ) = saved
             is_paused = False
             task_cancelled = False
             task_start_time = time.time()
             asyncio.create_task(
-                run_copy_process(client, message, source_chat, dest_chat, start_id, current_id, last_id, copied_count)
+                run_copy_process(
+                    client, message, source_chat, dest_chat, start_id, current_id, last_id,
+                    copied_count, videos_count, thumbs_applied_count, texts_count, branded_count
+                )
             )
             await message.reply_text(f"▶️ <b>Resuming paused task from Message ID:</b> <code>{current_id}</code>")
         else:
@@ -494,13 +629,19 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
             await send_status_view(callback)
         elif not task_running:
             saved = get_progress()
-            if saved and saved[6] == "PAUSED":
-                source_chat, dest_chat, start_id, current_id, last_id, copied_count, _ = saved
+            if saved and saved[11] == "PAUSED":
+                (
+                    source_chat, dest_chat, start_id, current_id, last_id,
+                    copied_count, videos_count, thumbs_applied_count, texts_count, branded_count, _
+                ) = saved
                 is_paused = False
                 task_cancelled = False
                 task_start_time = time.time()
                 asyncio.create_task(
-                    run_copy_process(client, callback.message, source_chat, dest_chat, start_id, current_id, last_id, copied_count)
+                    run_copy_process(
+                        client, callback.message, source_chat, dest_chat, start_id, current_id, last_id,
+                        copied_count, videos_count, thumbs_applied_count, texts_count, branded_count
+                    )
                 )
                 await callback.answer("Resumed from checkpoint!", show_alert=False)
                 await send_status_view(callback)
@@ -554,14 +695,17 @@ async def start_copy_command(client: Client, message: Message):
     is_paused = False
     task_cancelled = False
     task_start_time = time.time()
-    save_progress(str(source_chat), str(dest_chat), start_msg_id, start_msg_id, end_msg_id, 0, "RUNNING")
+    save_progress(str(source_chat), str(dest_chat), start_msg_id, start_msg_id, end_msg_id, 0, 0, 0, 0, 0, "RUNNING")
 
     # Start copy task with live dashboard
     asyncio.create_task(
-        run_copy_process(client, message, source_chat, dest_chat, start_msg_id, start_msg_id, end_msg_id, 0)
+        run_copy_process(
+            client, message, source_chat, dest_chat, start_msg_id, start_msg_id, end_msg_id,
+            0, 0, 0, 0, 0
+        )
     )
 
-# ==================== MAIN WORKER LOOP ====================
+# ==================== CORE WORKER WITH ADVANCED DASHBOARD ====================
 async def run_copy_process(
     client: Client,
     notify_message: Message,
@@ -571,6 +715,10 @@ async def run_copy_process(
     current_start: int,
     last_id: int,
     initial_copied_count: int,
+    initial_videos_count: int,
+    initial_thumbs_applied_count: int,
+    initial_texts_count: int,
+    initial_branded_count: int,
 ):
     global task_running, is_paused, task_cancelled, task_start_time, active_dashboard_msg
     task_running = True
@@ -595,9 +743,17 @@ async def run_copy_process(
         task_running = False
         return
 
+    # Pre-fetch Destination Raw Peer and Cover Photo
+    dest_peer = await client.resolve_peer(dest_chat_obj.id)
+    cover_photo = await get_or_upload_cover_photo(client)
+
     brand = get_config("brand_name", "@skillneast1")
     current_id = current_start
     copied_count = initial_copied_count
+    videos_count = initial_videos_count
+    thumbs_applied_count = initial_thumbs_applied_count
+    texts_count = initial_texts_count
+    branded_count = initial_branded_count
 
     # 1. SEND LIVE DASHBOARD DIRECTLY ON /copy
     initial_card, initial_keyboard = render_dashboard(
@@ -608,6 +764,10 @@ async def run_copy_process(
         current_id=current_id,
         last_id=last_id,
         copied_count=copied_count,
+        videos_count=videos_count,
+        thumbs_applied_count=thumbs_applied_count,
+        texts_count=texts_count,
+        branded_count=branded_count,
         status_label="RUNNING 🟢",
         start_time=task_start_time,
     )
@@ -627,7 +787,10 @@ async def run_copy_process(
             return
 
         while is_paused:
-            save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "PAUSED")
+            save_progress(
+                str(source_chat), str(dest_chat), start_id, current_id, last_id,
+                copied_count, videos_count, thumbs_applied_count, texts_count, branded_count, "PAUSED"
+            )
             await asyncio.sleep(2)
             if task_cancelled:
                 delete_task_progress()
@@ -639,34 +802,80 @@ async def run_copy_process(
             if msg and not msg.empty and not msg.service:
                 raw_caption = msg.caption or msg.text or ""
                 is_pure_text = bool(msg.text and not msg.media)
-                final_caption = process_caption(raw_caption, is_pure_text=is_pure_text)
+                final_caption, was_branded = process_caption(raw_caption, is_pure_text=is_pure_text)
+
+                if was_branded:
+                    branded_count += 1
 
                 try:
-                    if msg.media:
-                        await client.copy_message(
-                            chat_id=dest_chat_obj.id,
-                            from_chat_id=source_chat_obj.id,
-                            message_id=msg.id,
-                            caption=final_caption,
-                        )
-                    elif msg.text:
-                        await client.send_message(
-                            chat_id=dest_chat_obj.id,
-                            text=final_caption,
-                        )
+                    # ==================== VIDEO HANDLING WITH INSTANT COVER ====================
+                    if msg.video:
+                        videos_count += 1
+                        has_original_thumb = bool(msg.video.thumbs or msg.video.thumbnail)
+                        
+                        # COMBINED RULE: Apply thumbnail if original had thumb OR was branded in 40% pool
+                        should_apply_thumb = (has_original_thumb or was_branded) and (cover_photo is not None)
+
+                        if should_apply_thumb:
+                            success = await send_video_with_instant_cover(
+                                client=client,
+                                dest_peer=dest_peer,
+                                msg=msg,
+                                caption=final_caption,
+                                cover_photo=cover_photo,
+                            )
+                            if success:
+                                thumbs_applied_count += 1
+                            else:
+                                await client.copy_message(
+                                    chat_id=dest_chat_obj.id,
+                                    from_chat_id=source_chat_obj.id,
+                                    message_id=msg.id,
+                                    caption=final_caption,
+                                )
+                        else:
+                            await client.copy_message(
+                                chat_id=dest_chat_obj.id,
+                                from_chat_id=source_chat_obj.id,
+                                message_id=msg.id,
+                                caption=final_caption,
+                            )
+                    else:
+                        texts_count += 1
+                        if msg.media:
+                            await client.copy_message(
+                                chat_id=dest_chat_obj.id,
+                                from_chat_id=source_chat_obj.id,
+                                message_id=msg.id,
+                                caption=final_caption,
+                            )
+                        elif msg.text:
+                            await client.send_message(
+                                chat_id=dest_chat_obj.id,
+                                text=final_caption,
+                            )
                     copied_count += 1
                 except Exception:
+                    # Fallback for protected channels
                     if msg.media:
                         file_path = await client.download_media(msg)
                         if file_path:
                             try:
                                 if msg.video:
-                                    await client.send_video(dest_chat_obj.id, video=file_path, caption=final_caption)
+                                    videos_count += 1
+                                    has_original_thumb = bool(msg.video.thumbs or msg.video.thumbnail)
+                                    thumb_to_use = CUSTOM_THUMB_PATH if ((has_original_thumb or was_branded) and os.path.exists(CUSTOM_THUMB_PATH)) else None
+                                    if thumb_to_use:
+                                        thumbs_applied_count += 1
+                                    await client.send_video(dest_chat_obj.id, video=file_path, caption=final_caption, thumb=thumb_to_use)
                                 elif msg.photo:
+                                    texts_count += 1
                                     await client.send_photo(dest_chat_obj.id, photo=file_path, caption=final_caption)
                                 elif msg.document:
+                                    texts_count += 1
                                     await client.send_document(dest_chat_obj.id, document=file_path, caption=final_caption)
                                 elif msg.audio:
+                                    texts_count += 1
                                     await client.send_audio(dest_chat_obj.id, audio=file_path, caption=final_caption)
                                 copied_count += 1
                             finally:
@@ -676,7 +885,10 @@ async def run_copy_process(
                 await asyncio.sleep(DELAY_SECONDS)
 
             current_id += 1
-            save_progress(str(source_chat), str(dest_chat), start_id, current_id, last_id, copied_count, "RUNNING")
+            save_progress(
+                str(source_chat), str(dest_chat), start_id, current_id, last_id,
+                copied_count, videos_count, thumbs_applied_count, texts_count, branded_count, "RUNNING"
+            )
 
             # 2. REAL-TIME DASHBOARD AUTO-EDIT (Every 3.5 seconds)
             now = time.time()
@@ -690,6 +902,10 @@ async def run_copy_process(
                     current_id=min(current_id, last_id),
                     last_id=last_id,
                     copied_count=copied_count,
+                    videos_count=videos_count,
+                    thumbs_applied_count=thumbs_applied_count,
+                    texts_count=texts_count,
+                    branded_count=branded_count,
                     status_label="RUNNING 🟢",
                     start_time=task_start_time,
                 )
@@ -729,6 +945,10 @@ async def run_copy_process(
         current_id=last_id,
         last_id=last_id,
         copied_count=copied_count,
+        videos_count=videos_count,
+        thumbs_applied_count=thumbs_applied_count,
+        texts_count=texts_count,
+        branded_count=branded_count,
         status_label="COMPLETED 🎉",
         start_time=task_start_time,
     )
@@ -749,7 +969,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Real-Time Dashboard Userbot is Online & Ready on Railway!")
+    print("✅ Advanced Real-Time Dashboard Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
