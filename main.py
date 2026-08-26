@@ -32,13 +32,11 @@ API_ID = int(os.environ.get("API_ID", 33720317))
 API_HASH = os.environ.get("API_HASH", "145db99951f44490f134ac7446126630")
 SESSION_STRING = os.environ.get(
     "SESSION_STRING",
-    "BQFSZo0AJLV54FzfhZLbBN4Yn8G6rZqm_jj47moBLcgpCyuPazj3Sn8llEdSxKBM1Fq98YeO3Hy6BqW8KEHRptR3tiVvOR52oF8pol1rNL5dWdRxZICncSKyL7y9l5xdomAk_aY33ukxqrwsOG4NvVx5jkz2o8Ij2wI0eY6KnWffg3DHMaOUjpfvgxFuaugpdcZyy9PZvHl8BKoTuht2Gse97UcJojXVIujvbSIjhJVIukrn9MgrP5_XqHODgYYnqdAh3qd0XRAysK_lKCKYXPqF-kGAM4ajLmVFB57zgy9D14XoGlkDz5niH0BwB9SgxC3Wheo4xzMQF5w1yWWN7KnX0mP2pgAAAAIWPSnIAA"
+    "BQFSZo0AI9u3vxq2VRuJpcnzjr1DqBN6ADUOx8YiP14CO7Lmpqwx3fLFr-PKI0Dsw-sfaImZFWYPt9icc0U7GkLakeV9qCR2pXHUpSN6B6yDYg9EWYmCCCW8H6eDWwjwJLkDxHcDuvP7zFq5Idb1FzovTuow0SPL9engHMjM2FJi3i_wTYVwwknN9vvgZ2YdnzERY_MYXNvo7UZnD_1B8jXEx1U19PRYCHd9RWjpWltMX5fn3_5DgE72DOiPhx-qW4TfIrFu2GuozNyM0JVQdS7vQCR6mYusa7gJIjZt9n6e3CjGdq5plkgB098r0iNINQzIlPCp8aM0ULmxqV2E89hxEAyGqAAAAAIWPSnIAA"
 )
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8976549873:AAEve2Q9XHUCqolnhsm6ptuAR04KSfmi1bs")
-
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_production_v2_userbot.db"
+DB_NAME = "final_smart_name_userbot.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -69,7 +67,7 @@ def init_db():
         )
     """)
     cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('brand_name', '@skillneast1')")
-    cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('caption_prefix', 'Provided by')")
+    cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('caption_prefix', 'Extracted By')")
     conn.commit()
     conn.close()
 
@@ -84,6 +82,7 @@ def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
 def set_config(key: str, value: str):
     conn = get_db()
     cursor = conn.cursor()
+    conn.commit()
     cursor.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, str(value)))
     conn.commit()
     conn.close()
@@ -136,21 +135,13 @@ def get_progress():
 
 init_db()
 
-# ==================== PYROGRAM CLIENT INITIALIZATION ====================
-if SESSION_STRING:
-    app = Client(
-        "final_v2_session_bot",
-        api_id=API_ID,
-        api_hash=API_HASH,
-        session_string=SESSION_STRING
-    )
-else:
-    app = Client(
-        "final_v2_token_bot",
-        api_id=API_ID,
-        api_hash=API_HASH,
-        bot_token=BOT_TOKEN
-    )
+# ==================== PYROGRAM CLIENT ====================
+app = Client(
+    "final_smart_name_session",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    session_string=SESSION_STRING,
+)
 
 task_running = False
 is_paused = False
@@ -158,7 +149,7 @@ task_cancelled = False
 task_start_time = 0.0
 active_dashboard_msg: Optional[Message] = None
 
-# ==================== UI & CAPTION HELPERS ====================
+# ==================== UI & ADVANCED SMART CAPTION LOGIC ====================
 def format_time(seconds: float) -> str:
     seconds = int(max(0, seconds))
     hours, remainder = divmod(seconds, 3600)
@@ -175,26 +166,41 @@ def generate_progress_bar(percentage: float, length: int = 12) -> str:
 
 def process_caption(caption_text: str, is_pure_text: bool = False) -> Tuple[str, bool]:
     brand = get_config("brand_name", "@skillneast1")
-    prefix = get_config("caption_prefix", "Provided by")
+    prefix = get_config("caption_prefix", "Extracted By")
 
-    if caption_text:
-        usernames = re.findall(r"@[a-zA-Z0-9_]+", caption_text)
-        if usernames:
-            return re.sub(r"@[a-zA-Z0-9_]+", brand, caption_text), True
+    if not caption_text:
+        # If media has no caption, apply 40% random rule
+        if random.random() < 0.40:
+            return f"{prefix} ➤ {brand}", True
+        return "", False
 
-    if is_pure_text and caption_text:
+    # 1. Replace existing @usernames (100%)
+    usernames = re.findall(r"@[a-zA-Z0-9_]+", caption_text)
+    if usernames:
+        new_cap = caption_text
+        for u in usernames:
+            new_cap = new_cap.replace(u, brand)
+        return new_cap, True
+
+    # 2. Smart Detection for "Extracted By ➤ Name" / "Downloaded By : Name" (Without @)
+    # Matches patterns like "Extracted By ➤ Gaurav RaJput" or "Uploaded by: John Doe"
+    pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
+    if pattern.search(caption_text):
+        # Replace the name part after keyword with our brand
+        new_cap = pattern.sub(rf'\1 ➤ {brand}', caption_text)
+        return new_cap, True
+
+    # 3. Short titles protection
+    if is_pure_text:
         clean_txt = caption_text.strip()
         if len(clean_txt) <= 30 or clean_txt.lower() in ["welcome", "complete", "notes", "index", "module"]:
             return caption_text, False
 
-    should_brand = random.random() < 0.40
-    if should_brand:
-        if caption_text:
-            return f"{caption_text}\n\n{prefix} {brand}", True
-        else:
-            return f"{prefix} {brand}", True
-    else:
-        return caption_text if caption_text else "", False
+    # 4. True Random 40% Chance for other clean captions
+    if random.random() < 0.40:
+        return f"{caption_text}\n\n{prefix} ➤ {brand}", True
+
+    return caption_text, False
 
 def render_dashboard(
     source_chat: str,
@@ -230,11 +236,11 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        "<b>🚀 LIVE REAL-TIME DASHBOARD V2</b>\n"
+        "<b>🚀 SMART WATERMARK DASHBOARD</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target:</b> <code>{dest_chat}</code>\n"
-        f"🎨 <b>Watermark:</b> <code>{prefix} {brand}</code>\n"
+        f"🎨 <b>Watermark:</b> <code>{prefix} ➤ {brand}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 <b>PROGRESS:</b> <code>[{bar}]</code> <b>{percentage}%</b>\n\n"
         f"🔢 <b>Current ID:</b> <code>{current_id}</code> / <code>{last_id}</code>\n"
@@ -316,20 +322,20 @@ ALLOWED_FILTER = (filters.me | filters.private | filters.bot)
 async def start_command(client: Client, message: Message):
     target = get_config("target_chat", "❌ Not Set")
     brand = get_config("brand_name", "@skillneast1")
-    prefix = get_config("caption_prefix", "Provided by")
+    prefix = get_config("caption_prefix", "Extracted By")
 
     welcome_text = (
-        "<b>🤖 Final Automation Userbot/Bot</b>\n"
+        "<b>🤖 Smart Watermark Userbot Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Target:</b> <code>{target}</code>\n"
-        f"🎨 <b>Watermark:</b> <code>{prefix} {brand}</code>\n\n"
+        f"🎨 <b>Watermark:</b> <code>{prefix} ➤ {brand}</code>\n\n"
         "<b>📖 Commands:</b>\n"
         "• <code>/copy &lt;link&gt;</code> — Start copy task\n"
         "• <code>/ld</code> — Live Dashboard\n"
-        "• <code>/cancel</code> — Stop active task\n"
+        "• <code>/cancel</code> — Stop task\n"
         "• <code>/settarget &lt;id&gt;</code> — Set destination channel\n"
-        "• <code>/setbrand &lt;name&gt;</code> — Set custom brand\n"
-        "• <code>/setprefix &lt;text&gt;</code> — Set prefix tag\n"
+        "• <code>/setbrand &lt;name&gt;</code> — Set custom brand name\n"
+        "• <code>/setprefix &lt;text&gt;</code> — Set custom prefix (e.g. Extracted By)\n"
         "• <code>/sync</code> — Sync channel cache\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -366,7 +372,7 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
     saved = get_progress()
     target_config = get_config("target_chat", "❌ Not Set")
     brand = get_config("brand_name", "@skillneast1")
-    prefix = get_config("caption_prefix", "Provided by")
+    prefix = get_config("caption_prefix", "Extracted By")
 
     if task_running or (saved and saved[10] in ["RUNNING", "PAUSED"]):
         (
@@ -541,7 +547,7 @@ async def run_copy_process(
         return
 
     brand = get_config("brand_name", "@skillneast1")
-    prefix = get_config("caption_prefix", "Provided by")
+    prefix = get_config("caption_prefix", "Extracted By")
     current_id = current_start
     copied_count = initial_copied_count
     videos_count = initial_videos_count
@@ -698,7 +704,7 @@ async def run_copy_process(
 # ==================== RUNNER ====================
 async def main():
     await app.start()
-    print("✅ Final Automation Bot Client is Online & Ready!")
+    print("✅ Smart Name-Replacement Bot Client is Online & Ready!")
     await start_web_server()
 
 if __name__ == "__main__":
