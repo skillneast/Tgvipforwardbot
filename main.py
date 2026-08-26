@@ -30,12 +30,15 @@ nest_asyncio.apply()
 # ==================== CONFIGURATION ====================
 API_ID = int(os.environ.get("API_ID", 33720317))
 API_HASH = os.environ.get("API_HASH", "145db99951f44490f134ac7446126630")
-SESSION_STRING = os.environ.get("SESSION_STRING", "")
+SESSION_STRING = os.environ.get(
+    "SESSION_STRING",
+    "BQFSZo0AJLV54FzfhZLbBN4Yn8G6rZqm_jj47moBLcgpCyuPazj3Sn8llEdSxKBM1Fq98YeO3Hy6BqW8KEHRptR3tiVvOR52oF8pol1rNL5dWdRxZICncSKyL7y9l5xdomAk_aY33ukxqrwsOG4NvVx5jkz2o8Ij2wI0eY6KnWffg3DHMaOUjpfvgxFuaugpdcZyy9PZvHl8BKoTuht2Gse97UcJojXVIujvbSIjhJVIukrn9MgrP5_XqHODgYYnqdAh3qd0XRAysK_lKCKYXPqF-kGAM4ajLmVFB57zgy9D14XoGlkDz5niH0BwB9SgxC3Wheo4xzMQF5w1yWWN7KnX0mP2pgAAAAIWPSnIAA"
+)
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8976549873:AAEve2Q9XHUCqolnhsm6ptuAR04KSfmi1bs")
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_advance_bot_userbot.db"
+DB_NAME = "final_production_v2_userbot.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -136,14 +139,14 @@ init_db()
 # ==================== PYROGRAM CLIENT INITIALIZATION ====================
 if SESSION_STRING:
     app = Client(
-        "advance_session_bot",
+        "final_v2_session_bot",
         api_id=API_ID,
         api_hash=API_HASH,
         session_string=SESSION_STRING
     )
 else:
     app = Client(
-        "advance_token_bot",
+        "final_v2_token_bot",
         api_id=API_ID,
         api_hash=API_HASH,
         bot_token=BOT_TOKEN
@@ -227,7 +230,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        "<b>🚀 ADVANCE REAL-TIME DASHBOARD</b>\n"
+        "<b>🚀 LIVE REAL-TIME DASHBOARD V2</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target:</b> <code>{dest_chat}</code>\n"
@@ -316,17 +319,17 @@ async def start_command(client: Client, message: Message):
     prefix = get_config("caption_prefix", "Provided by")
 
     welcome_text = (
-        "<b>🤖 Advance Automation Userbot/Bot</b>\n"
+        "<b>🤖 Final Automation Userbot/Bot</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Target:</b> <code>{target}</code>\n"
         f"🎨 <b>Watermark:</b> <code>{prefix} {brand}</code>\n\n"
-        "<b>📖 Advance Commands:</b>\n"
-        "• <code>/copy &lt;link&gt;</code> — Start high-speed copy task\n"
-        "• <code>/ld</code> — Live Dashboard view\n"
-        "• <code>/cancel</code> — Stop & clear active task\n"
-        "• <code>/settarget &lt;id&gt;</code> — Configure target channel\n"
-        "• <code>/setbrand &lt;name&gt;</code> — Set custom brand username\n"
-        "• <code>/setprefix &lt;text&gt;</code> — Set custom prefix tag\n"
+        "<b>📖 Commands:</b>\n"
+        "• <code>/copy &lt;link&gt;</code> — Start copy task\n"
+        "• <code>/ld</code> — Live Dashboard\n"
+        "• <code>/cancel</code> — Stop active task\n"
+        "• <code>/settarget &lt;id&gt;</code> — Set destination channel\n"
+        "• <code>/setbrand &lt;name&gt;</code> — Set custom brand\n"
+        "• <code>/setprefix &lt;text&gt;</code> — Set prefix tag\n"
         "• <code>/sync</code> — Sync channel cache\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -695,7 +698,7 @@ async def run_copy_process(
 # ==================== RUNNER ====================
 async def main():
     await app.start()
-    print("✅ Advance Bot Client is Online & Ready on Railway!")
+    print("✅ Final Automation Bot Client is Online & Ready!")
     await start_web_server()
 
 if __name__ == "__main__":
