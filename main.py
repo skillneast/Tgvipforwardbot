@@ -30,13 +30,14 @@ nest_asyncio.apply()
 # ==================== CONFIGURATION ====================
 API_ID = int(os.environ.get("API_ID", 33720317))
 API_HASH = os.environ.get("API_HASH", "145db99951f44490f134ac7446126630")
-SESSION_STRING = os.environ.get(
-    "SESSION_STRING",
-    "BQFSZo0AI9u3vxq2VRuJpcnzjr1DqBN6ADUOx8YiP14CO7Lmpqwx3fLFr-PKI0Dsw-sfaImZFWYPt9icc0U7GkLakeV9qCR2pXHUpSN6B6yDYg9EWYmCCCW8H6eDWwjwJLkDxHcDuvP7zFq5Idb1FzovTuow0SPL9engHMjM2FJi3i_wTYVwwknN9vvgZ2YdnzERY_MYXNvo7UZnD_1B8jXEx1U19PRYCHd9RWjpWltMX5fn3_5DgE72DOiPhx-qW4TfIrFu2GuozNyM0JVQdS7vQCR6mYusa7gJIjZt9n6e3CjGdq5plkgB098r0iNINQzIlPCp8aM0ULmxqV2E89hxEAyGqAAAAAIWPSnIAA"
-)
+SESSION_STRING = os.environ.get("SESSION_STRING", "")
+
+if not SESSION_STRING:
+    raise ValueError("Missing critical Environment Variable: SESSION_STRING")
+
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_smart_name_userbot.db"
+DB_NAME = "final_userbot_mode.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -82,7 +83,6 @@ def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
 def set_config(key: str, value: str):
     conn = get_db()
     cursor = conn.cursor()
-    conn.commit()
     cursor.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, str(value)))
     conn.commit()
     conn.close()
@@ -135,9 +135,9 @@ def get_progress():
 
 init_db()
 
-# ==================== PYROGRAM CLIENT ====================
+# ==================== PYROGRAM USERBOT CLIENT ====================
 app = Client(
-    "final_smart_name_session",
+    "final_userbot_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -149,7 +149,7 @@ task_cancelled = False
 task_start_time = 0.0
 active_dashboard_msg: Optional[Message] = None
 
-# ==================== UI & ADVANCED SMART CAPTION LOGIC ====================
+# ==================== UI & CAPTION LOGIC ====================
 def format_time(seconds: float) -> str:
     seconds = int(max(0, seconds))
     hours, remainder = divmod(seconds, 3600)
@@ -169,7 +169,6 @@ def process_caption(caption_text: str, is_pure_text: bool = False) -> Tuple[str,
     prefix = get_config("caption_prefix", "Extracted By")
 
     if not caption_text:
-        # If media has no caption, apply 40% random rule
         if random.random() < 0.40:
             return f"{prefix} ➤ {brand}", True
         return "", False
@@ -183,10 +182,8 @@ def process_caption(caption_text: str, is_pure_text: bool = False) -> Tuple[str,
         return new_cap, True
 
     # 2. Smart Detection for "Extracted By ➤ Name" / "Downloaded By : Name" (Without @)
-    # Matches patterns like "Extracted By ➤ Gaurav RaJput" or "Uploaded by: John Doe"
     pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
     if pattern.search(caption_text):
-        # Replace the name part after keyword with our brand
         new_cap = pattern.sub(rf'\1 ➤ {brand}', caption_text)
         return new_cap, True
 
@@ -196,7 +193,7 @@ def process_caption(caption_text: str, is_pure_text: bool = False) -> Tuple[str,
         if len(clean_txt) <= 30 or clean_txt.lower() in ["welcome", "complete", "notes", "index", "module"]:
             return caption_text, False
 
-    # 4. True Random 40% Chance for other clean captions
+    # 4. True Random 40% Chance
     if random.random() < 0.40:
         return f"{caption_text}\n\n{prefix} ➤ {brand}", True
 
@@ -236,7 +233,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        "<b>🚀 SMART WATERMARK DASHBOARD</b>\n"
+        "<b>🚀 USERBOT LIVE DASHBOARD</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target:</b> <code>{dest_chat}</code>\n"
@@ -315,27 +312,27 @@ async def start_web_server():
     server = uvicorn.Server(config)
     await server.serve()
 
-# ==================== COMMAND HANDLERS ====================
-ALLOWED_FILTER = (filters.me | filters.private | filters.bot)
+# ==================== COMMAND HANDLERS (USERBOT MODE) ====================
+ALLOWED_FILTER = (filters.me | filters.private)
 
-@app.on_message(filters.command(["start", "help"], prefixes=["/", "."]))
+@app.on_message(ALLOWED_FILTER & filters.command(["start", "help"], prefixes=["/", "."]))
 async def start_command(client: Client, message: Message):
     target = get_config("target_chat", "❌ Not Set")
     brand = get_config("brand_name", "@skillneast1")
     prefix = get_config("caption_prefix", "Extracted By")
 
     welcome_text = (
-        "<b>🤖 Smart Watermark Userbot Active</b>\n"
+        "<b>🤖 Userbot Mode Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Target:</b> <code>{target}</code>\n"
         f"🎨 <b>Watermark:</b> <code>{prefix} ➤ {brand}</code>\n\n"
-        "<b>📖 Commands:</b>\n"
+        "<b>📖 Commands (Send in Saved Messages):</b>\n"
         "• <code>/copy &lt;link&gt;</code> — Start copy task\n"
         "• <code>/ld</code> — Live Dashboard\n"
         "• <code>/cancel</code> — Stop task\n"
         "• <code>/settarget &lt;id&gt;</code> — Set destination channel\n"
         "• <code>/setbrand &lt;name&gt;</code> — Set custom brand name\n"
-        "• <code>/setprefix &lt;text&gt;</code> — Set custom prefix (e.g. Extracted By)\n"
+        "• <code>/setprefix &lt;text&gt;</code> — Set custom prefix\n"
         "• <code>/sync</code> — Sync channel cache\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -354,7 +351,7 @@ async def start_command(client: Client, message: Message):
     ])
     await message.reply_text(welcome_text, reply_markup=keyboard, disable_web_page_preview=True)
 
-@app.on_message(filters.command(["cancel", "stop"], prefixes=["/", "."]))
+@app.on_message(ALLOWED_FILTER & filters.command(["cancel", "stop"], prefixes=["/", "."]))
 async def cancel_command(client: Client, message: Message):
     global task_running, is_paused, task_cancelled
     task_cancelled = True
@@ -363,7 +360,7 @@ async def cancel_command(client: Client, message: Message):
     delete_task_progress()
     await message.reply_text("<b>🛑 Task Cancelled & Cleared Successfully!</b>")
 
-@app.on_message(filters.command(["ld", "status"], prefixes=["/", "."]))
+@app.on_message(ALLOWED_FILTER & filters.command(["ld", "status"], prefixes=["/", "."]))
 async def ld_command(client: Client, message: Message):
     await send_status_view(message)
 
@@ -410,14 +407,14 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
             pass
         await target_ctx.answer("Refreshed")
 
-@app.on_message(filters.command(["pause"], prefixes=["/", "."]))
+@app.on_message(ALLOWED_FILTER & filters.command(["pause"], prefixes=["/", "."]))
 async def pause_task(client: Client, message: Message):
     global is_paused
     if task_running:
         is_paused = True
         await message.reply_text("⏸️ <b>Task Paused.</b>")
 
-@app.on_message(filters.command(["resume"], prefixes=["/", "."]))
+@app.on_message(ALLOWED_FILTER & filters.command(["resume"], prefixes=["/", "."]))
 async def resume_task(client: Client, message: Message):
     global is_paused, task_running, task_start_time, task_cancelled
     if not task_running:
@@ -438,7 +435,7 @@ async def resume_task(client: Client, message: Message):
             )
             await message.reply_text(f"▶️ <b>Resuming from ID:</b> <code>{current_id}</code>")
 
-@app.on_message(filters.command(["settarget"], prefixes=["/", "."]))
+@app.on_message(ALLOWED_FILTER & filters.command(["settarget"], prefixes=["/", "."]))
 async def set_target_cmd(client: Client, message: Message):
     args = message.text.split()
     if len(args) < 2:
@@ -446,7 +443,7 @@ async def set_target_cmd(client: Client, message: Message):
     set_config("target_chat", args[1].strip())
     await message.reply_text(f"✅ Target set to: <code>{args[1].strip()}</code>")
 
-@app.on_message(filters.command(["setbrand"], prefixes=["/", "."]))
+@app.on_message(ALLOWED_FILTER & filters.command(["setbrand"], prefixes=["/", "."]))
 async def set_brand_cmd(client: Client, message: Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
@@ -454,7 +451,7 @@ async def set_brand_cmd(client: Client, message: Message):
     set_config("brand_name", args[1].strip())
     await message.reply_text(f"✅ Brand set to: <code>{args[1].strip()}</code>")
 
-@app.on_message(filters.command(["setprefix"], prefixes=["/", "."]))
+@app.on_message(ALLOWED_FILTER & filters.command(["setprefix"], prefixes=["/", "."]))
 async def set_prefix_cmd(client: Client, message: Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
@@ -484,7 +481,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         await send_status_view(callback)
 
 # ==================== MAIN COPY COMMAND ====================
-@app.on_message(filters.command(["copy"], prefixes=["/", "."]))
+@app.on_message(ALLOWED_FILTER & filters.command(["copy"], prefixes=["/", "."]))
 async def start_copy_command(client: Client, message: Message):
     global task_running, is_paused, task_cancelled, task_start_time
 
@@ -704,7 +701,9 @@ async def run_copy_process(
 # ==================== RUNNER ====================
 async def main():
     await app.start()
-    print("✅ Smart Name-Replacement Bot Client is Online & Ready!")
+    print("⚡ Syncing dialogs into peer cache...")
+    await sync_dialogs(app)
+    print("✅ Userbot Mode Client is Online & Ready!")
     await start_web_server()
 
 if __name__ == "__main__":
