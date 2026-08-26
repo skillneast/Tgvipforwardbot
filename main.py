@@ -36,7 +36,7 @@ SESSION_STRING = os.environ.get(
 )
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_batch_userbot.db"
+DB_NAME = "final_perfect_custom_userbot.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -67,6 +67,7 @@ def init_db():
         )
     """)
     cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('brand_name', '@skillneast1')")
+    cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('caption_prefix', 'Provided by')")
     conn.commit()
     conn.close()
 
@@ -133,9 +134,9 @@ def get_progress():
 
 init_db()
 
-# ==================== PYROGRAM CLIENT & GLOBAL STATE ====================
+# ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "batch_userbot_session",
+    "final_custom_userbot_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -164,23 +165,27 @@ def generate_progress_bar(percentage: float, length: int = 12) -> str:
 
 def process_caption(caption_text: str, is_pure_text: bool = False) -> Tuple[str, bool]:
     brand = get_config("brand_name", "@skillneast1")
+    prefix = get_config("caption_prefix", "Provided by")
 
+    # 1. 100% Replace external @usernames
     if caption_text:
         usernames = re.findall(r"@[a-zA-Z0-9_]+", caption_text)
         if usernames:
             return re.sub(r"@[a-zA-Z0-9_]+", brand, caption_text), True
 
+    # 2. Short titles protection
     if is_pure_text and caption_text:
         clean_txt = caption_text.strip()
         if len(clean_txt) <= 30 or clean_txt.lower() in ["welcome", "complete", "notes", "index", "module"]:
             return caption_text, False
 
+    # 3. True Random 40% Chance with Custom Prefix
     should_brand = random.random() < 0.40
     if should_brand:
         if caption_text:
-            return f"{caption_text}\n\nProvided by {brand}", True
+            return f"{caption_text}\n\n{prefix} {brand}", True
         else:
-            return f"Provided by {brand}", True
+            return f"{prefix} {brand}", True
     else:
         return caption_text if caption_text else "", False
 
@@ -188,6 +193,7 @@ def render_dashboard(
     source_chat: str,
     dest_chat: str,
     brand: str,
+    prefix: str,
     start_id: int,
     current_id: int,
     last_id: int,
@@ -217,27 +223,26 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        "<b>🚀 HIGH-SPEED BATCH LIVE DASHBOARD</b>\n"
+        "<b>🚀 CUSTOM USERBOT LIVE DASHBOARD</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📍 <b>Source Chat:</b> <code>{source_chat}</code>\n"
-        f"🎯 <b>Target Chat:</b> <code>{dest_chat}</code>\n"
-        f"🎨 <b>Brand Tag:</b> <code>{brand}</code>\n"
+        f"📍 <b>Source:</b> <code>{source_chat}</code>\n"
+        f"🎯 <b>Target:</b> <code>{dest_chat}</code>\n"
+        f"🎨 <b>Watermark:</b> <code>{prefix} {brand}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 <b>PROGRESS:</b> <code>[{bar}]</code> <b>{percentage}%</b>\n\n"
-        f"🔢 <b>Current Message ID:</b> <code>{current_id}</code> / <code>{last_id}</code>\n"
-        f"📦 <b>Total in Range:</b> <code>{total_msgs}</code> msgs\n"
-        f"✅ <b>Processed / Copied:</b> <code>{copied_count}</code>\n"
-        f"⏳ <b>Remaining to Copy:</b> <code>{remaining_msgs}</code> msgs\n"
+        f"🔢 <b>Current ID:</b> <code>{current_id}</code> / <code>{last_id}</code>\n"
+        f"📦 <b>Total Range:</b> <code>{total_msgs}</code> msgs\n"
+        f"✅ <b>Copied:</b> <code>{copied_count}</code>\n"
+        f"⏳ <b>Remaining:</b> <code>{remaining_msgs}</code> msgs\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>📂 MEDIA BREAKDOWN:</b>\n"
-        f"• 🎥 <b>Total Videos:</b> <code>{videos_count}</code>\n"
-        f"• 📝 <b>Text / Other Files:</b> <code>{texts_count}</code>\n"
-        f"• 🏷️ <b>Branded Captions:</b> <code>{branded_count}</code>\n"
+        f"• 🎥 <b>Videos:</b> <code>{videos_count}</code>\n"
+        f"• 📝 <b>Texts/Files:</b> <code>{texts_count}</code>\n"
+        f"• 🏷️ <b>Branded:</b> <code>{branded_count}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏱️ <b>Elapsed Time:</b> <code>{elapsed_str}</code>\n"
-        f"⌛ <b>Estimated Time (ETA):</b> <code>{eta_str}</code>\n"
-        f"⚡ <b>Transfer Speed:</b> <code>{speed_per_min} msgs/min</code>\n"
-        f"📶 <b>Current State:</b> <code>{status_label}</code>\n"
+        f"⏱️ <b>Elapsed:</b> <code>{elapsed_str}</code> | ⌛ <b>ETA:</b> <code>{eta_str}</code>\n"
+        f"⚡ <b>Speed:</b> <code>{speed_per_min} msgs/min</code>\n"
+        f"📶 <b>State:</b> <code>{status_label}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
@@ -247,8 +252,8 @@ def render_dashboard(
             InlineKeyboardButton("▶️ Resume", callback_data="btn_resume")
         ],
         [
-            InlineKeyboardButton("🔄 Live Refresh (/ld)", callback_data="btn_status"),
-            InlineKeyboardButton("🛑 Cancel Task", callback_data="btn_stop")
+            InlineKeyboardButton("🔄 Refresh", callback_data="btn_status"),
+            InlineKeyboardButton("🛑 Cancel", callback_data="btn_stop")
         ]
     ])
 
@@ -290,7 +295,7 @@ web_app = FastAPI()
 @web_app.get("/")
 @web_app.get("/health")
 async def health_check():
-    return JSONResponse(status_code=200, content={"status": "online", "task_running": task_running})
+    return JSONResponse(status_status=200, content={"status": "online", "task_running": task_running})
 
 async def start_web_server():
     config = uvicorn.Config(app=web_app, host="0.0.0.0", port=PORT, log_level="warning")
@@ -302,12 +307,46 @@ ALLOWED_FILTER = (filters.me | filters.private)
 
 @app.on_message(ALLOWED_FILTER & filters.command(["start", "help"], prefixes=["/", "."]))
 async def start_command(client: Client, message: Message):
-    target = get_config("target_chat", "❌ Not Configured")
+    target = get_config("target_chat", "❌ Not Set")
     brand = get_config("brand_name", "@skillneast1")
-    await message.reply_text(
-        f"<b>🚀 High-Speed Batch Userbot Active!</b>\nTarget: <code>{target}</code>\nBrand: <code>{brand}</code>",
-        disable_web_page_preview=True
+    prefix = get_config("caption_prefix", "Provided by")
+
+    welcome_text = (
+        "<b>🤖 Custom Watermark Userbot Active</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎯 <b>Target:</b> <code>{target}</code>\n"
+        f"🎨 <b>Watermark:</b> <code>{prefix} {brand}</code>\n\n"
+        "<b>📖 Custom Commands:</b>\n"
+        "• <code>/setbrand &lt;username&gt;</code> — Set custom brand name\n"
+        "• <code>/setprefix &lt;text&gt;</code> — Set custom prefix (e.g. Extracted by)\n"
+        "• <code>/copy &lt;link&gt;</code> — Start copy task\n"
+        "• <code>/ld</code> — Live Dashboard\n"
+        "• <code>/cancel</code> — Stop task\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
+    await message.reply_text(welcome_text, disable_web_page_preview=True)
+
+@app.on_message(ALLOWED_FILTER & filters.command(["setbrand"], prefixes=["/", "."]))
+async def set_brand_cmd(client: Client, message: Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        current = get_config("brand_name", "@skillneast1")
+        await message.reply_text(f"ℹ️ Current brand: <code>{current}</code>\nUsage: <code>/setbrand @myusername</code>")
+        return
+    new_brand = args[1].strip()
+    set_config("brand_name", new_brand)
+    await message.reply_text(f"✅ <b>Brand set to:</b> <code>{new_brand}</code>")
+
+@app.on_message(ALLOWED_FILTER & filters.command(["setprefix"], prefixes=["/", "."]))
+async def set_prefix_cmd(client: Client, message: Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        current = get_config("caption_prefix", "Provided by")
+        await message.reply_text(f"ℹ️ Current prefix: <code>{current}</code>\nUsage: <code>/setprefix Extracted by</code>")
+        return
+    new_prefix = args[1].strip()
+    set_config("caption_prefix", new_prefix)
+    await message.reply_text(f"✅ <b>Prefix set to:</b> <code>{new_prefix}</code>")
 
 @app.on_message(ALLOWED_FILTER & filters.command(["cancel", "stop"], prefixes=["/", "."]))
 async def cancel_command(client: Client, message: Message):
@@ -325,8 +364,9 @@ async def ld_command(client: Client, message: Message):
 async def send_status_view(target_ctx: Message | CallbackQuery):
     global active_dashboard_msg
     saved = get_progress()
-    target_config = get_config("target_chat", "❌ Not Configured")
+    target_config = get_config("target_chat", "❌ Not Set")
     brand = get_config("brand_name", "@skillneast1")
+    prefix = get_config("caption_prefix", "Provided by")
 
     if task_running or (saved and saved[10] in ["RUNNING", "PAUSED"]):
         (
@@ -338,6 +378,7 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
             source_chat=source_chat,
             dest_chat=dest_chat,
             brand=brand,
+            prefix=prefix,
             start_id=start_id,
             current_id=current_id,
             last_id=last_id,
@@ -399,14 +440,6 @@ async def set_target_cmd(client: Client, message: Message):
     set_config("target_chat", args[1].strip())
     await message.reply_text(f"✅ Target set to: <code>{args[1].strip()}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["setbrand"], prefixes=["/", "."]))
-async def set_brand_command(client: Client, message: Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        return
-    set_config("brand_name", args[1].strip())
-    await message.reply_text(f"✅ Brand updated to: <code>{args[1].strip()}</code>")
-
 @app.on_callback_query()
 async def handle_callbacks(client: Client, callback: CallbackQuery):
     global is_paused, task_running, task_cancelled, task_start_time
@@ -464,7 +497,7 @@ async def start_copy_command(client: Client, message: Message):
         )
     )
 
-# ==================== CORE HIGH-SPEED BATCH WORKER ====================
+# ==================== CORE HIGH-SPEED WORKER ====================
 async def run_copy_process(
     client: Client,
     notify_message: Message,
@@ -492,6 +525,7 @@ async def run_copy_process(
         return
 
     brand = get_config("brand_name", "@skillneast1")
+    prefix = get_config("caption_prefix", "Provided by")
     current_id = current_start
     copied_count = initial_copied_count
     videos_count = initial_videos_count
@@ -502,6 +536,7 @@ async def run_copy_process(
         source_chat=str(source_chat),
         dest_chat=str(dest_chat),
         brand=brand,
+        prefix=prefix,
         start_id=start_id,
         current_id=current_id,
         last_id=last_id,
@@ -520,7 +555,6 @@ async def run_copy_process(
     active_dashboard_msg = dashboard_msg
     last_dashboard_edit_time = time.time()
 
-    # BATCH FETCHING LOOP (Fetch 50 messages at once to bypass timeouts)
     batch_size = 50
 
     while current_id <= last_id:
@@ -544,7 +578,6 @@ async def run_copy_process(
             batch_end = min(current_id + batch_size - 1, last_id)
             message_ids = list(range(current_id, batch_end + 1))
             
-            # Fetch batch of messages in ONE single fast request!
             messages = await client.get_messages(source_chat_obj.id, message_ids)
             if not isinstance(messages, list):
                 messages = [messages]
@@ -589,7 +622,6 @@ async def run_copy_process(
                 copied_count, videos_count, texts_count, branded_count, "RUNNING"
             )
 
-            # Live Dashboard Auto-Edit
             now = time.time()
             if (now - last_dashboard_edit_time >= 5.0) or (current_id > last_id):
                 last_dashboard_edit_time = now
@@ -597,6 +629,7 @@ async def run_copy_process(
                     source_chat=str(source_chat),
                     dest_chat=str(dest_chat),
                     brand=brand,
+                    prefix=prefix,
                     start_id=start_id,
                     current_id=min(current_id, last_id),
                     last_id=last_id,
@@ -627,6 +660,7 @@ async def run_copy_process(
         source_chat=str(source_chat),
         dest_chat=str(dest_chat),
         brand=brand,
+        prefix=prefix,
         start_id=start_id,
         current_id=last_id,
         last_id=last_id,
@@ -650,7 +684,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ High-Speed Batch Userbot is Online & Ready on Railway!")
+    print("✅ High-Speed Custom Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
