@@ -30,13 +30,12 @@ nest_asyncio.apply()
 # ==================== CONFIGURATION ====================
 API_ID = int(os.environ.get("API_ID", 33720317))
 API_HASH = os.environ.get("API_HASH", "145db99951f44490f134ac7446126630")
-SESSION_STRING = os.environ.get(
-    "SESSION_STRING",
-    "BQFSZo0AI9u3vxq2VRuJpcnzjr1DqBN6ADUOx8YiP14CO7Lmpqwx3fLFr-PKI0Dsw-sfaImZFWYPt9icc0U7GkLakeV9qCR2pXHUpSN6B6yDYg9EWYmCCCW8H6eDWwjwJLkDxHcDuvP7zFq5Idb1FzovTuow0SPL9engHMjM2FJi3i_wTYVwwknN9vvgZ2YdnzERY_MYXNvo7UZnD_1B8jXEx1U19PRYCHd9RWjpWltMX5fn3_5DgE72DOiPhx-qW4TfIrFu2GuozNyM0JVQdS7vQCR6mYusa7gJIjZt9n6e3CjGdq5plkgB098r0iNINQzIlPCp8aM0ULmxqV2E89hxEAyGqAAAAAIWPSnIAA"
-)
+SESSION_STRING = os.environ.get("SESSION_STRING", "")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8976549873:AAEve2Q9XHUCqolnhsm6ptuAR04KSfmi1bs")
+
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_perfect_custom_userbot.db"
+DB_NAME = "final_advance_bot_userbot.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -134,13 +133,21 @@ def get_progress():
 
 init_db()
 
-# ==================== PYROGRAM CLIENT ====================
-app = Client(
-    "final_custom_userbot_session",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    session_string=SESSION_STRING,
-)
+# ==================== PYROGRAM CLIENT INITIALIZATION ====================
+if SESSION_STRING:
+    app = Client(
+        "advance_session_bot",
+        api_id=API_ID,
+        api_hash=API_HASH,
+        session_string=SESSION_STRING
+    )
+else:
+    app = Client(
+        "advance_token_bot",
+        api_id=API_ID,
+        api_hash=API_HASH,
+        bot_token=BOT_TOKEN
+    )
 
 task_running = False
 is_paused = False
@@ -148,7 +155,7 @@ task_cancelled = False
 task_start_time = 0.0
 active_dashboard_msg: Optional[Message] = None
 
-# ==================== UI & CAPTION LOGIC ====================
+# ==================== UI & CAPTION HELPERS ====================
 def format_time(seconds: float) -> str:
     seconds = int(max(0, seconds))
     hours, remainder = divmod(seconds, 3600)
@@ -167,19 +174,16 @@ def process_caption(caption_text: str, is_pure_text: bool = False) -> Tuple[str,
     brand = get_config("brand_name", "@skillneast1")
     prefix = get_config("caption_prefix", "Provided by")
 
-    # 1. 100% Replace external @usernames
     if caption_text:
         usernames = re.findall(r"@[a-zA-Z0-9_]+", caption_text)
         if usernames:
             return re.sub(r"@[a-zA-Z0-9_]+", brand, caption_text), True
 
-    # 2. Short titles protection
     if is_pure_text and caption_text:
         clean_txt = caption_text.strip()
         if len(clean_txt) <= 30 or clean_txt.lower() in ["welcome", "complete", "notes", "index", "module"]:
             return caption_text, False
 
-    # 3. True Random 40% Chance with Custom Prefix
     should_brand = random.random() < 0.40
     if should_brand:
         if caption_text:
@@ -223,7 +227,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        "<b>🚀 CUSTOM USERBOT LIVE DASHBOARD</b>\n"
+        "<b>🚀 ADVANCE REAL-TIME DASHBOARD</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target:</b> <code>{dest_chat}</code>\n"
@@ -295,7 +299,7 @@ web_app = FastAPI()
 @web_app.get("/")
 @web_app.get("/health")
 async def health_check():
-    return JSONResponse(status_status=200, content={"status": "online", "task_running": task_running})
+    return JSONResponse(status_code=200, content={"status": "online", "task_running": task_running})
 
 async def start_web_server():
     config = uvicorn.Config(app=web_app, host="0.0.0.0", port=PORT, log_level="warning")
@@ -303,61 +307,54 @@ async def start_web_server():
     await server.serve()
 
 # ==================== COMMAND HANDLERS ====================
-ALLOWED_FILTER = (filters.me | filters.private)
+ALLOWED_FILTER = (filters.me | filters.private | filters.bot)
 
-@app.on_message(ALLOWED_FILTER & filters.command(["start", "help"], prefixes=["/", "."]))
+@app.on_message(filters.command(["start", "help"], prefixes=["/", "."]))
 async def start_command(client: Client, message: Message):
     target = get_config("target_chat", "❌ Not Set")
     brand = get_config("brand_name", "@skillneast1")
     prefix = get_config("caption_prefix", "Provided by")
 
     welcome_text = (
-        "<b>🤖 Custom Watermark Userbot Active</b>\n"
+        "<b>🤖 Advance Automation Userbot/Bot</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Target:</b> <code>{target}</code>\n"
         f"🎨 <b>Watermark:</b> <code>{prefix} {brand}</code>\n\n"
-        "<b>📖 Custom Commands:</b>\n"
-        "• <code>/setbrand &lt;username&gt;</code> — Set custom brand name\n"
-        "• <code>/setprefix &lt;text&gt;</code> — Set custom prefix (e.g. Extracted by)\n"
-        "• <code>/copy &lt;link&gt;</code> — Start copy task\n"
-        "• <code>/ld</code> — Live Dashboard\n"
-        "• <code>/cancel</code> — Stop task\n"
+        "<b>📖 Advance Commands:</b>\n"
+        "• <code>/copy &lt;link&gt;</code> — Start high-speed copy task\n"
+        "• <code>/ld</code> — Live Dashboard view\n"
+        "• <code>/cancel</code> — Stop & clear active task\n"
+        "• <code>/settarget &lt;id&gt;</code> — Configure target channel\n"
+        "• <code>/setbrand &lt;name&gt;</code> — Set custom brand username\n"
+        "• <code>/setprefix &lt;text&gt;</code> — Set custom prefix tag\n"
+        "• <code>/sync</code> — Sync channel cache\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
-    await message.reply_text(welcome_text, disable_web_page_preview=True)
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📊 Live Dashboard", callback_data="btn_status"),
+            InlineKeyboardButton("🎨 Brand", callback_data="btn_brand")
+        ],
+        [
+            InlineKeyboardButton("⏸️ Pause", callback_data="btn_pause"),
+            InlineKeyboardButton("▶️ Resume", callback_data="btn_resume")
+        ],
+        [
+            InlineKeyboardButton("🛑 Cancel Task", callback_data="btn_stop")
+        ]
+    ])
+    await message.reply_text(welcome_text, reply_markup=keyboard, disable_web_page_preview=True)
 
-@app.on_message(ALLOWED_FILTER & filters.command(["setbrand"], prefixes=["/", "."]))
-async def set_brand_cmd(client: Client, message: Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        current = get_config("brand_name", "@skillneast1")
-        await message.reply_text(f"ℹ️ Current brand: <code>{current}</code>\nUsage: <code>/setbrand @myusername</code>")
-        return
-    new_brand = args[1].strip()
-    set_config("brand_name", new_brand)
-    await message.reply_text(f"✅ <b>Brand set to:</b> <code>{new_brand}</code>")
-
-@app.on_message(ALLOWED_FILTER & filters.command(["setprefix"], prefixes=["/", "."]))
-async def set_prefix_cmd(client: Client, message: Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        current = get_config("caption_prefix", "Provided by")
-        await message.reply_text(f"ℹ️ Current prefix: <code>{current}</code>\nUsage: <code>/setprefix Extracted by</code>")
-        return
-    new_prefix = args[1].strip()
-    set_config("caption_prefix", new_prefix)
-    await message.reply_text(f"✅ <b>Prefix set to:</b> <code>{new_prefix}</code>")
-
-@app.on_message(ALLOWED_FILTER & filters.command(["cancel", "stop"], prefixes=["/", "."]))
+@app.on_message(filters.command(["cancel", "stop"], prefixes=["/", "."]))
 async def cancel_command(client: Client, message: Message):
     global task_running, is_paused, task_cancelled
     task_cancelled = True
     task_running = False
     is_paused = False
     delete_task_progress()
-    await message.reply_text("<b>🛑 Task Cancelled & Cleared!</b>")
+    await message.reply_text("<b>🛑 Task Cancelled & Cleared Successfully!</b>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["ld", "status"], prefixes=["/", "."]))
+@app.on_message(filters.command(["ld", "status"], prefixes=["/", "."]))
 async def ld_command(client: Client, message: Message):
     await send_status_view(message)
 
@@ -404,14 +401,14 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
             pass
         await target_ctx.answer("Refreshed")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["pause"], prefixes=["/", "."]))
+@app.on_message(filters.command(["pause"], prefixes=["/", "."]))
 async def pause_task(client: Client, message: Message):
     global is_paused
     if task_running:
         is_paused = True
         await message.reply_text("⏸️ <b>Task Paused.</b>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["resume"], prefixes=["/", "."]))
+@app.on_message(filters.command(["resume"], prefixes=["/", "."]))
 async def resume_task(client: Client, message: Message):
     global is_paused, task_running, task_start_time, task_cancelled
     if not task_running:
@@ -432,13 +429,29 @@ async def resume_task(client: Client, message: Message):
             )
             await message.reply_text(f"▶️ <b>Resuming from ID:</b> <code>{current_id}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["settarget"], prefixes=["/", "."]))
+@app.on_message(filters.command(["settarget"], prefixes=["/", "."]))
 async def set_target_cmd(client: Client, message: Message):
     args = message.text.split()
     if len(args) < 2:
         return
     set_config("target_chat", args[1].strip())
     await message.reply_text(f"✅ Target set to: <code>{args[1].strip()}</code>")
+
+@app.on_message(filters.command(["setbrand"], prefixes=["/", "."]))
+async def set_brand_cmd(client: Client, message: Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        return
+    set_config("brand_name", args[1].strip())
+    await message.reply_text(f"✅ Brand set to: <code>{args[1].strip()}</code>")
+
+@app.on_message(filters.command(["setprefix"], prefixes=["/", "."]))
+async def set_prefix_cmd(client: Client, message: Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        return
+    set_config("caption_prefix", args[1].strip())
+    await message.reply_text(f"✅ Prefix set to: <code>{args[1].strip()}</code>")
 
 @app.on_callback_query()
 async def handle_callbacks(client: Client, callback: CallbackQuery):
@@ -462,7 +475,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         await send_status_view(callback)
 
 # ==================== MAIN COPY COMMAND ====================
-@app.on_message(ALLOWED_FILTER & filters.command(["copy"], prefixes=["/", "."]))
+@app.on_message(filters.command(["copy"], prefixes=["/", "."]))
 async def start_copy_command(client: Client, message: Message):
     global task_running, is_paused, task_cancelled, task_start_time
 
@@ -682,9 +695,7 @@ async def run_copy_process(
 # ==================== RUNNER ====================
 async def main():
     await app.start()
-    print("⚡ Syncing dialogs into peer cache...")
-    await sync_dialogs(app)
-    print("✅ High-Speed Custom Userbot is Online & Ready on Railway!")
+    print("✅ Advance Bot Client is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
