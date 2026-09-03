@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "ultimate_dual_mode_v3.db"
+DB_NAME = "ultimate_dual_mode_v4.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -150,7 +150,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "ultimate_dual_mode_v3_session",
+    "ultimate_dual_mode_v4_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -162,7 +162,7 @@ task_cancelled = False
 task_start_time = 0.0
 active_dashboard_msg: Optional[Message] = None
 
-# ==================== UI & SMART CAPTION LOGIC ====================
+# ==================== UI & SMART QUOTED-CAPTION LOGIC ====================
 def format_time(seconds: float) -> str:
     seconds = int(max(0, seconds))
     hours, remainder = divmod(seconds, 3600)
@@ -193,7 +193,7 @@ def process_caption_custom(
             return f"{prefix} ➤ {brand}", True
         return "", False
 
-    # 1. Replace existing @usernames (100%)
+    # 1. 100% Replace existing @usernames (Even inside Quotes/Blocks)
     usernames = re.findall(r"@[a-zA-Z0-9_]+", caption_text)
     if usernames:
         new_cap = caption_text
@@ -201,7 +201,7 @@ def process_caption_custom(
             new_cap = new_cap.replace(u, brand.split("➤")[-1].strip() if "➤" in brand else brand)
         return new_cap, True
 
-    # 2. Smart Detection for "Extracted By ➤ Name"
+    # 2. Smart Detection for Quoted or Normal "Extracted By : @MRANUJ7" or "Extracted By ➤ Name"
     pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
     if pattern.search(caption_text):
         new_cap = pattern.sub(rf'\1 ➤ {brand.split("➤")[-1].strip() if "➤" in brand else brand}', caption_text)
@@ -213,7 +213,7 @@ def process_caption_custom(
         if len(clean_txt) <= 30 or clean_txt.lower() in ["welcome", "complete", "notes", "index", "module"]:
             return caption_text, False
 
-    # 4. Custom Percentage Roll (e.g. 40% or 100%)
+    # 4. Custom Percentage Roll (e.g. 40%)
     if random.random() < (percentage_val / 100.0):
         watermark_str = f"{prefix} ➤ {brand}".strip()
         return f"{caption_text}\n\n{watermark_str}", True
@@ -255,7 +255,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        f"<b>🚀 {mode_title} LIVE DASHBOARD</b>\n"
+        f"<b>🚀 {mode_title} LIVE DASHBOARD V4</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source/Channel:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target Destination:</b> <code>{dest_chat}</code>\n"
@@ -346,14 +346,14 @@ async def start_command(client: Client, message: Message):
     m2_live = get_config("mode2_live_active", "off")
 
     welcome_text = (
-        "<b>🤖 Ultimate Dual-Mode Userbot V3 Active</b>\n"
+        "<b>🤖 Ultimate Dual-Mode Userbot V4 Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Mode 1 Target:</b> <code>{target1}</code> | Brand: <code>{brand1}</code>\n"
         f"🎯 <b>Mode 2 Target:</b> <code>{target2}</code> | Brand: <code>{brand2}</code>\n"
         f"⚡ <b>Mode 2 Live Auto-Watermark:</b> <code>{m2_live.upper()}</code>\n\n"
         "<b>📖 Commands:</b>\n"
-        "• <code>/copy &lt;link&gt;</code> — Mode 1 (Copy & Paste)\n"
-        "• <code>/mode2 &lt;link&gt; &lt;start&gt;-&lt;end&gt;</code> — Mode 2 (Range Edit)\n"
+        "• <code>/copy &lt;link&gt;</code> — Mode 1 (Copy & Paste to Target 1)\n"
+        "• <code>/mode2 &lt;link&gt; &lt;start&gt;-&lt;end&gt;</code> — Mode 2 (Edit in-place in Target 2)\n"
         "• <code>/mode2live on</code> or <code>off</code> — Auto-watermark incoming files\n"
         "• <code>/settarget2 &lt;id&gt;</code> | <code>/setbrand2 &lt;name&gt;</code>\n"
         "• <code>/setpercentage 40</code> (or 100 for all files)\n"
@@ -586,7 +586,7 @@ async def start_mode2_command(client: Client, message: Message):
         )
     )
 
-# ==================== MODE 2 LIVE LISTENER (AUTO-WATERMARK INCOMING FILES) ====================
+# ==================== MODE 2 LIVE LISTENER ====================
 @app.on_message(filters.all)
 async def mode2_live_listener(client: Client, message: Message):
     if get_config("mode2_live_active", "off").lower() != "on":
@@ -601,9 +601,7 @@ async def mode2_live_listener(client: Client, message: Message):
     except ValueError:
         return
 
-    # Check if message is from the active Mode 2 target channel
     if message.chat and message.chat.id == target_id:
-        # Do not edit messages sent by us or service messages
         if message.from_user and message.from_user.is_self:
             return
         if message.service:
@@ -866,12 +864,8 @@ async def run_copy_process(
 async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
-    try:
-        async for dialog in app.get_dialogs():
-            pass
-    except Exception as e:
-        print(f"⚠️ Dialog sync warning: {e}")
-    print("✅ Ultimate Dual-Mode V3 Userbot is Online & Ready on Railway!")
+    await sync_dialogs(app)
+    print("✅ Ultimate Dual-Mode V4 Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
