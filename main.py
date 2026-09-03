@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "ultimate_live_watcher_v3.db"
+DB_NAME = "ultimate_dual_mode_v3.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -78,7 +78,7 @@ def init_db():
         'brand_percentage': '40',
         'mode2_brand_enabled': 'on',
         'mode2_brand_percentage': '40',
-        'mode2_live_status': 'off'
+        'mode2_live_active': 'off'
     }
     for k, v in defaults.items():
         cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", (k, v))
@@ -150,7 +150,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "ultimate_live_watcher_v3_session",
+    "ultimate_dual_mode_v3_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -334,57 +334,6 @@ async def start_web_server():
     server = uvicorn.Server(config)
     await server.serve()
 
-# ==================== REAL-TIME LIVE LISTENER FOR MODE 2 LIVE ====================
-@app.on_message(filters.channel)
-async def live_channel_watcher(client: Client, message: Message):
-    live_status = get_config("mode2_live_status", "off")
-    if live_status.lower() != "on":
-        return
-
-    target2 = get_config("mode2_target", "")
-    if not target2:
-        return
-
-    # Check if incoming message is from our target channel
-    if str(message.chat.id) != str(target2):
-        return
-
-    brand = get_config("mode2_brand", "@skillneast1")
-    prefix = get_config("mode2_prefix", "Extracted By")
-    enabled = get_config("mode2_brand_enabled", "on")
-    pct = int(get_config("mode2_brand_percentage", "40"))
-
-    try:
-        raw_caption = message.caption or message.text or ""
-        is_pure_text = bool(message.text and not message.media)
-
-        final_caption, was_branded = process_caption_custom(
-            raw_caption,
-            brand=brand,
-            prefix=prefix,
-            enabled=enabled,
-            percentage_val=pct,
-            is_pure_text=is_pure_text
-        )
-
-        if was_branded:
-            if message.media:
-                if message.caption != final_caption:
-                    await client.edit_message_caption(
-                        chat_id=message.chat.id,
-                        message_id=message.id,
-                        caption=final_caption
-                    )
-            elif message.text:
-                if message.text != final_caption:
-                    await client.edit_message_text(
-                        chat_id=message.chat.id,
-                        message_id=message.id,
-                        text=final_caption
-                    )
-    except Exception as e:
-        print(f"⚠️ Live Watcher Edit Error: {e}")
-
 # ==================== COMMAND HANDLERS ====================
 ALLOWED_FILTER = (filters.me | filters.private)
 
@@ -394,22 +343,20 @@ async def start_command(client: Client, message: Message):
     target2 = get_config("mode2_target", "❌ Not Set")
     brand1 = get_config("brand_name", "@skillneast1")
     brand2 = get_config("mode2_brand", "@skillneast1")
-    live_st = get_config("mode2_live_status", "off").upper()
+    m2_live = get_config("mode2_live_active", "off")
 
     welcome_text = (
-        "<b>🤖 Ultimate Dual-Mode V3 Userbot Active</b>\n"
+        "<b>🤖 Ultimate Dual-Mode Userbot V3 Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Mode 1 Target:</b> <code>{target1}</code> | Brand: <code>{brand1}</code>\n"
         f"🎯 <b>Mode 2 Target:</b> <code>{target2}</code> | Brand: <code>{brand2}</code>\n"
-        f"⚡ <b>Mode 2 Live Watcher:</b> <code>{live_st}</code>\n\n"
+        f"⚡ <b>Mode 2 Live Auto-Watermark:</b> <code>{m2_live.upper()}</code>\n\n"
         "<b>📖 Commands:</b>\n"
-        "• <code>/copy &lt;link&gt;</code> — Mode 1 Copy\n"
-        "• <code>/mode2 &lt;link&gt; &lt;start&gt;-&lt;end&gt;</code> — Mode 2 Range Edit\n"
-        "• <code>/mode2live on / off</code> — Instant Auto-Watermark Listener\n"
-        "• <code>/settarget &lt;id&gt;</code> / <code>/settarget2 &lt;id&gt;</code>\n"
-        "• <code>/setbrand &lt;name&gt;</code> / <code>/setbrand2 &lt;name&gt;</code>\n"
-        "• <code>/setprefix &lt;text&gt;</code> / <code>/setprefix2 &lt;text&gt;</code>\n"
-        "• <code>/togglebrand on/off</code> | <code>/setpercentage 40</code>\n"
+        "• <code>/copy &lt;link&gt;</code> — Mode 1 (Copy & Paste)\n"
+        "• <code>/mode2 &lt;link&gt; &lt;start&gt;-&lt;end&gt;</code> — Mode 2 (Range Edit)\n"
+        "• <code>/mode2live on</code> or <code>off</code> — Auto-watermark incoming files\n"
+        "• <code>/settarget2 &lt;id&gt;</code> | <code>/setbrand2 &lt;name&gt;</code>\n"
+        "• <code>/setpercentage 40</code> (or 100 for all files)\n"
         "• <code>/ld</code> (Live Dashboard) | <code>/cancel</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -466,16 +413,7 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
             start_time=task_start_time,
         )
     else:
-        live_st = get_config("mode2_live_status", "off").upper()
-        t2 = get_config("mode2_target", "Not Set")
-        card_text = (
-            f"<b>📊 Live Dashboard Status</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "ℹ️ <i>No background copy/edit task running.</i>\n\n"
-            f"⚡ <b>Mode 2 Live Watcher:</b> <code>{live_st}</code>\n"
-            f"🎯 <b>Mode 2 Target Channel:</b> <code>{t2}</code>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        )
+        card_text = "<b>📊 Live Dashboard:</b> No active task running."
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data="btn_status")]])
 
     if isinstance(target_ctx, Message):
@@ -488,18 +426,6 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
         except Exception:
             pass
         await target_ctx.answer("Refreshed")
-
-@app.on_message(ALLOWED_FILTER & filters.command(["mode2live"], prefixes=["/", "."]))
-async def mode2_live_cmd(client: Client, message: Message):
-    args = message.text.split()
-    if len(args) < 2:
-        st = get_config("mode2_live_status", "off")
-        await message.reply_text(f"ℹ️ Mode 2 Live Watcher is currently: <code>{st.upper()}</code>\nUsage: <code>/mode2live on</code> or <code>off</code>")
-        return
-    val = args[1].strip().lower()
-    if val in ["on", "off"]:
-        set_config("mode2_live_status", val)
-        await message.reply_text(f"✅ Mode 2 Live Watcher set to: <code>{val.upper()}</code>")
 
 @app.on_message(ALLOWED_FILTER & filters.command(["settarget"], prefixes=["/", "."]))
 async def set_target_cmd(client: Client, message: Message):
@@ -529,28 +455,14 @@ async def set_brand2_cmd(client: Client, message: Message):
     set_config("mode2_brand", args[1].strip())
     await message.reply_text(f"✅ Mode 2 Brand set to: <code>{args[1].strip()}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["setprefix"], prefixes=["/", "."]))
-async def set_prefix_cmd(client: Client, message: Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2: return
-    set_config("caption_prefix", args[1].strip())
-    await message.reply_text(f"✅ Mode 1 Prefix set to: <code>{args[1].strip()}</code>")
-
-@app.on_message(ALLOWED_FILTER & filters.command(["setprefix2"], prefixes=["/", "."]))
-async def set_prefix2_cmd(client: Client, message: Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2: return
-    set_config("mode2_prefix", args[1].strip())
-    await message.reply_text(f"✅ Mode 2 Prefix set to: <code>{args[1].strip()}</code>")
-
-@app.on_message(ALLOWED_FILTER & filters.command(["togglebrand"], prefixes=["/", "."]))
-async def toggle_brand_cmd(client: Client, message: Message):
+@app.on_message(ALLOWED_FILTER & filters.command(["mode2live"], prefixes=["/", "."]))
+async def mode2_live_cmd(client: Client, message: Message):
     args = message.text.split()
     if len(args) < 2: return
     val = args[1].strip().lower()
     if val in ["on", "off"]:
-        set_config("brand_enabled", val)
-        await message.reply_text(f"✅ Watermark toggled: <code>{val.upper()}</code>")
+        set_config("mode2_live_active", val)
+        await message.reply_text(f"✅ Mode 2 Live Auto-Watermark is now: <code>{val.upper()}</code>")
 
 @app.on_message(ALLOWED_FILTER & filters.command(["setpercentage"], prefixes=["/", "."]))
 async def set_percentage_cmd(client: Client, message: Message):
@@ -559,7 +471,8 @@ async def set_percentage_cmd(client: Client, message: Message):
     try:
         pct = int(args[1].strip())
         set_config("brand_percentage", str(pct))
-        await message.reply_text(f"✅ Random Watermark percentage set to: <code>{pct}%</code>")
+        set_config("mode2_brand_percentage", str(pct))
+        await message.reply_text(f"✅ Watermark percentage set to: <code>{pct}%</code>")
     except ValueError:
         pass
 
@@ -595,7 +508,7 @@ async def start_copy_command(client: Client, message: Message):
 
     dest_chat = get_config("target_chat")
     if not dest_chat:
-        await message.reply_text("❌ Target channel not set! Use `/settarget <id>`")
+        await message.reply_text("❌ Target channel not set! Use `/settarget`")
         return
 
     args = message.text.split()
@@ -672,6 +585,64 @@ async def start_mode2_command(client: Client, message: Message):
             0, 0, 0, 0, is_mode2=True
         )
     )
+
+# ==================== MODE 2 LIVE LISTENER (AUTO-WATERMARK INCOMING FILES) ====================
+@app.on_message(filters.all)
+async def mode2_live_listener(client: Client, message: Message):
+    if get_config("mode2_live_active", "off").lower() != "on":
+        return
+
+    target_chat = get_config("mode2_target")
+    if not target_chat:
+        return
+
+    try:
+        target_id = int(target_chat)
+    except ValueError:
+        return
+
+    # Check if message is from the active Mode 2 target channel
+    if message.chat and message.chat.id == target_id:
+        # Do not edit messages sent by us or service messages
+        if message.from_user and message.from_user.is_self:
+            return
+        if message.service:
+            return
+
+        brand = get_config("mode2_brand", "@skillneast1")
+        prefix = get_config("mode2_prefix", "Extracted By")
+        pct = int(get_config("mode2_brand_percentage", "40"))
+
+        raw_caption = message.caption or message.text or ""
+        is_pure_text = bool(message.text and not message.media)
+
+        final_caption, was_branded = process_caption_custom(
+            raw_caption,
+            brand=brand,
+            prefix=prefix,
+            enabled="on",
+            percentage_val=pct,
+            is_pure_text=is_pure_text
+        )
+
+        if was_branded:
+            try:
+                if message.media:
+                    if message.caption != final_caption:
+                        await client.edit_message_caption(
+                            chat_id=target_id,
+                            message_id=message.id,
+                            caption=final_caption
+                        )
+                elif message.text:
+                    if message.text != final_caption:
+                        await client.edit_message_text(
+                            chat_id=target_id,
+                            message_id=message.id,
+                            text=final_caption
+                        )
+            except Exception:
+                pass
 
 # ==================== CORE DUAL-MODE WORKER ====================
 async def run_copy_process(
@@ -834,7 +805,7 @@ async def run_copy_process(
 
             now = time.time()
             if (now - last_dashboard_edit_time >= 5.0) or (current_id > last_id):
-                last_dashboard_edit_time = now
+                last_dashboard_edit_time = time.time()
                 updated_card, updated_keyboard = render_dashboard(
                     mode_title=mode_title,
                     source_chat=str(source_chat),
@@ -885,21 +856,22 @@ async def run_copy_process(
     )
     try:
         if active_dashboard_msg:
-            await active_dashboard_msg.edit_text(completed_card, reply_markup=completed_keyboard, disable_web_page_preview=True)
+            active_dashboard_msg.edit_text(completed_card, reply_markup=completed_keyboard, disable_web_page_preview=True)
         else:
-            await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
+            notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
     except Exception:
-        await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
+        notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
 
 # ==================== RUNNER ====================
 async def main():
-    # Ignore background updates from unknown/invalid channels to prevent crash
-    app.no_updates = True
-    
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
-    await sync_dialogs(app)
-    print("✅ Ultimate Live-Watcher V3 Userbot is Online & Ready on Railway!")
+    try:
+        async for dialog in app.get_dialogs():
+            pass
+    except Exception as e:
+        print(f"⚠️ Dialog sync warning: {e}")
+    print("✅ Ultimate Dual-Mode V3 Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
