@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_userbot_mode.db"
+DB_NAME = "final_accurate_userbot.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -137,7 +137,7 @@ init_db()
 
 # ==================== PYROGRAM USERBOT CLIENT ====================
 app = Client(
-    "final_userbot_session",
+    "final_accurate_userbot_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -173,7 +173,6 @@ def process_caption(caption_text: str, is_pure_text: bool = False) -> Tuple[str,
             return f"{prefix} ➤ {brand}", True
         return "", False
 
-    # 1. Replace existing @usernames (100%)
     usernames = re.findall(r"@[a-zA-Z0-9_]+", caption_text)
     if usernames:
         new_cap = caption_text
@@ -181,19 +180,16 @@ def process_caption(caption_text: str, is_pure_text: bool = False) -> Tuple[str,
             new_cap = new_cap.replace(u, brand)
         return new_cap, True
 
-    # 2. Smart Detection for "Extracted By ➤ Name" / "Downloaded By : Name" (Without @)
     pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
     if pattern.search(caption_text):
         new_cap = pattern.sub(rf'\1 ➤ {brand}', caption_text)
         return new_cap, True
 
-    # 3. Short titles protection
     if is_pure_text:
         clean_txt = caption_text.strip()
         if len(clean_txt) <= 30 or clean_txt.lower() in ["welcome", "complete", "notes", "index", "module"]:
             return caption_text, False
 
-    # 4. True Random 40% Chance
     if random.random() < 0.40:
         return f"{caption_text}\n\n{prefix} ➤ {brand}", True
 
@@ -233,7 +229,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        "<b>🚀 USERBOT LIVE DASHBOARD</b>\n"
+        "<b>🚀 ACCURATE USERBOT DASHBOARD</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target:</b> <code>{dest_chat}</code>\n"
@@ -312,7 +308,7 @@ async def start_web_server():
     server = uvicorn.Server(config)
     await server.serve()
 
-# ==================== COMMAND HANDLERS (USERBOT MODE) ====================
+# ==================== COMMAND HANDLERS ====================
 ALLOWED_FILTER = (filters.me | filters.private)
 
 @app.on_message(ALLOWED_FILTER & filters.command(["start", "help"], prefixes=["/", "."]))
@@ -322,7 +318,7 @@ async def start_command(client: Client, message: Message):
     prefix = get_config("caption_prefix", "Extracted By")
 
     welcome_text = (
-        "<b>🤖 Userbot Mode Active</b>\n"
+        "<b>🤖 Accurate Userbot Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Target:</b> <code>{target}</code>\n"
         f"🎨 <b>Watermark:</b> <code>{prefix} ➤ {brand}</code>\n\n"
@@ -516,7 +512,7 @@ async def start_copy_command(client: Client, message: Message):
         )
     )
 
-# ==================== CORE HIGH-SPEED WORKER ====================
+# ==================== ACCURATE & FAST WORKER LOOP ====================
 async def run_copy_process(
     client: Client,
     notify_message: Message,
@@ -602,6 +598,7 @@ async def run_copy_process(
                 messages = [messages]
 
             for msg in messages:
+                # ACCURATE CHECK: Increment pointer safely per ID checked
                 if msg and not msg.empty and not msg.service:
                     raw_caption = msg.caption or msg.text or ""
                     is_pure_text = bool(msg.text and not msg.media)
@@ -703,7 +700,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Userbot Mode Client is Online & Ready!")
+    print("✅ Accurate Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
