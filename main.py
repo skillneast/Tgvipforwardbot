@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "ultimate_quote_fix_userbot.db"
+DB_NAME = "ultimate_dual_mode_v5.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -150,7 +150,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "ultimate_quote_fix_session",
+    "ultimate_dual_mode_v5_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -162,7 +162,7 @@ task_cancelled = False
 task_start_time = 0.0
 active_dashboard_msg: Optional[Message] = None
 
-# ==================== UI & QUOTE-STRIPPING CAPTION LOGIC ====================
+# ==================== UI & BULLETPROOF QUOTED-CAPTION LOGIC ====================
 def format_time(seconds: float) -> str:
     seconds = int(max(0, seconds))
     hours, remainder = divmod(seconds, 3600)
@@ -193,40 +193,35 @@ def process_caption_custom(
             return f"{prefix} ➤ {brand}", True
         return "", False
 
-    # 1. Clean up Telegram Quote formatting (blockquotes > or html blockquotes)
-    cleaned_caption = caption_text
-    # Remove leading quote symbols if present per line
-    cleaned_caption = re.sub(r'^[>»]\s*', '', cleaned_caption, flags=re.MULTILINE)
-    # Remove HTML blockquote tags if any
-    cleaned_caption = re.sub(r'</?blockquote>', '', cleaned_caption, flags=re.IGNORECASE)
+    # Normalize/Clean Quoted or Markdown characters to make regex 100% robust
+    clean_cap = caption_text.replace(">", "").strip()
 
-    # 2. 100% Replace existing @usernames
-    usernames = re.findall(r"@[a-zA-Z0-9_]+", cleaned_caption)
+    # 1. 100% Replace existing @usernames (Even inside Quotes)
+    usernames = re.findall(r"@[a-zA-Z0-9_]+", clean_cap)
     if usernames:
-        new_cap = cleaned_caption
+        new_cap = clean_cap
         for u in usernames:
             new_cap = new_cap.replace(u, brand.split("➤")[-1].strip() if "➤" in brand else brand)
         return new_cap, True
 
-    # 3. Smart Detection for "Extracted By : @MRANUJ7" or "Extracted By ➤ Name" (Any format)
-    pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]?\s*([^\n]+)', re.IGNORECASE)
-    if pattern.search(cleaned_caption):
-        brand_clean = brand.split("➤")[-1].strip() if "➤" in brand else brand
-        new_cap = pattern.sub(rf'\1 ➤ {brand_clean}', cleaned_caption)
+    # 2. Smart Detection for Quoted or Normal "Extracted By : @MRANUJ7" or "Extracted By ➤ Name"
+    pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
+    if pattern.search(clean_cap):
+        new_cap = pattern.sub(rf'\1 ➤ {brand.split("➤")[-1].strip() if "➤" in brand else brand}', clean_cap)
         return new_cap, True
 
-    # 4. Short titles protection
+    # 3. Short titles protection
     if is_pure_text:
-        clean_txt = cleaned_caption.strip()
-        if len(clean_txt) <= 30 or clean_txt.lower() in ["welcome", "complete", "notes", "index", "module"]:
-            return cleaned_caption, False
+        txt_chk = clean_cap.strip()
+        if len(txt_chk) <= 30 or txt_chk.lower() in ["welcome", "complete", "notes", "index", "module"]:
+            return clean_cap, False
 
-    # 5. Custom Percentage Roll (e.g. 40%)
+    # 4. Custom Percentage Roll (e.g. 40%)
     if random.random() < (percentage_val / 100.0):
         watermark_str = f"{prefix} ➤ {brand}".strip()
-        return f"{cleaned_caption}\n\n{watermark_str}", True
+        return f"{clean_cap}\n\n{watermark_str}", True
 
-    return cleaned_caption, False
+    return clean_cap, False
 
 def render_dashboard(
     mode_title: str,
@@ -263,7 +258,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        f"<b>🚀 {mode_title} LIVE DASHBOARD</b>\n"
+        f"<b>🚀 {mode_title} LIVE DASHBOARD V5</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source/Channel:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target Destination:</b> <code>{dest_chat}</code>\n"
@@ -362,9 +357,9 @@ async def start_command(client: Client, message: Message):
         "<b>📖 Commands:</b>\n"
         "• <code>/copy &lt;link&gt;</code> — Mode 1 (Copy & Paste to Target 1)\n"
         "• <code>/mode2 &lt;link&gt; &lt;start&gt;-&lt;end&gt;</code> — Mode 2 (Edit in-place in Target 2)\n"
-        "• <code>/settarget &lt;id&gt;</code> | <code>/settarget2 &lt;id&gt;</code>\n"
-        "• <code>/setbrand &lt;name&gt;</code> | <code>/setbrand2 &lt;name&gt;</code>\n"
-        "• <code>/setprefix &lt;text&gt;</code> | <code>/setprefix2 &lt;text&gt;</code>\n"
+        "• <code>/mode2live on</code> or <code>off</code> — Auto-watermark incoming files\n"
+        "• <code>/settarget2 &lt;id&gt;</code> | <code>/setbrand2 &lt;name&gt;</code>\n"
+        "• <code>/setpercentage 40</code> (or 100 for all files)\n"
         "• <code>/ld</code> (Live Dashboard) | <code>/cancel</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -435,6 +430,35 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
             pass
         await target_ctx.answer("Refreshed")
 
+@app.on_message(ALLOWED_FILTER & filters.command(["pause"], prefixes=["/", "."]))
+async def pause_task(client: Client, message: Message):
+    global is_paused
+    if task_running:
+        is_paused = True
+        await message.reply_text("⏸️ <b>Task Paused.</b>")
+
+@app.on_message(ALLOWED_FILTER & filters.command(["resume"], prefixes=["/", "."]))
+async def resume_task(client: Client, message: Message):
+    global is_paused, task_running, task_start_time, task_cancelled
+    if not task_running:
+        saved = get_progress()
+        if saved and saved[10] == "PAUSED":
+            (
+                source_chat, dest_chat, start_id, current_id, last_id,
+                copied_count, videos_count, texts_count, branded_count, _
+            ) = saved
+            is_paused = False
+            task_cancelled = False
+            task_start_time = time.time()
+            is_m2 = (str(source_chat) == str(dest_chat))
+            asyncio.create_task(
+                run_copy_process(
+                    client, message, source_chat, dest_chat, start_id, current_id, last_id,
+                    copied_count, videos_count, texts_count, branded_count, is_mode2=is_m2
+                )
+            )
+            await message.reply_text(f"▶️ <b>Resuming from ID:</b> <code>{current_id}</code>")
+
 @app.on_message(ALLOWED_FILTER & filters.command(["settarget"], prefixes=["/", "."]))
 async def set_target_cmd(client: Client, message: Message):
     args = message.text.split()
@@ -463,19 +487,26 @@ async def set_brand2_cmd(client: Client, message: Message):
     set_config("mode2_brand", args[1].strip())
     await message.reply_text(f"✅ Mode 2 Brand set to: <code>{args[1].strip()}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["setprefix"], prefixes=["/", "."]))
-async def set_prefix_cmd(client: Client, message: Message):
-    args = message.text.split(maxsplit=1)
+@app.on_message(ALLOWED_FILTER & filters.command(["mode2live"], prefixes=["/", "."]))
+async def mode2_live_cmd(client: Client, message: Message):
+    args = message.text.split()
     if len(args) < 2: return
-    set_config("caption_prefix", args[1].strip())
-    await message.reply_text(f"✅ Mode 1 Prefix set to: <code>{args[1].strip()}</code>")
+    val = args[1].strip().lower()
+    if val in ["on", "off"]:
+        set_config("mode2_live_active", val)
+        await message.reply_text(f"✅ Mode 2 Live Auto-Watermark is now: <code>{val.upper()}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["setprefix2"], prefixes=["/", "."]))
-async def set_prefix2_cmd(client: Client, message: Message):
-    args = message.text.split(maxsplit=1)
+@app.on_message(ALLOWED_FILTER & filters.command(["setpercentage"], prefixes=["/", "."]))
+async def set_percentage_cmd(client: Client, message: Message):
+    args = message.text.split()
     if len(args) < 2: return
-    set_config("mode2_prefix", args[1].strip())
-    await message.reply_text(f"✅ Mode 2 Prefix set to: <code>{args[1].strip()}</code>")
+    try:
+        pct = int(args[1].strip())
+        set_config("brand_percentage", str(pct))
+        set_config("mode2_brand_percentage", str(pct))
+        await message.reply_text(f"✅ Watermark percentage set to: <code>{pct}%</code>")
+    except ValueError:
+        pass
 
 @app.on_callback_query()
 async def handle_callbacks(client: Client, callback: CallbackQuery):
@@ -748,7 +779,7 @@ async def run_copy_process(
 
             now = time.time()
             if (now - last_dashboard_edit_time >= 5.0) or (current_id > last_id):
-                last_dashboard_edit_time = now
+                last_dashboard_edit_time = time.time()
                 updated_card, updated_keyboard = render_dashboard(
                     mode_title=mode_title,
                     source_chat=str(source_chat),
