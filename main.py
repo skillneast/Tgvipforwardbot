@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_accurate_userbot.db"
+DB_NAME = "final_clean_copy_userbot.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -135,9 +135,9 @@ def get_progress():
 
 init_db()
 
-# ==================== PYROGRAM USERBOT CLIENT ====================
+# ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "final_accurate_userbot_session",
+    "final_clean_copy_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -229,7 +229,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        "<b>🚀 ACCURATE USERBOT DASHBOARD</b>\n"
+        "<b>🚀 CLEAN DIRECT COPY DASHBOARD</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target:</b> <code>{dest_chat}</code>\n"
@@ -242,7 +242,7 @@ def render_dashboard(
         f"⏳ <b>Remaining:</b> <code>{remaining_msgs}</code> msgs\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>📂 MEDIA BREAKDOWN:</b>\n"
-        f"• 🎥 <b>Videos:</b> <code>{videos_count}</code>\n"
+        f"• 🎥 <b>Videos/Media:</b> <code>{videos_count}</code>\n"
         f"• 📝 <b>Texts/Files:</b> <code>{texts_count}</code>\n"
         f"• 🏷️ <b>Branded:</b> <code>{branded_count}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -318,11 +318,11 @@ async def start_command(client: Client, message: Message):
     prefix = get_config("caption_prefix", "Extracted By")
 
     welcome_text = (
-        "<b>🤖 Accurate Userbot Active</b>\n"
+        "<b>🤖 Clean Direct Copy Userbot Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Target:</b> <code>{target}</code>\n"
         f"🎨 <b>Watermark:</b> <code>{prefix} ➤ {brand}</code>\n\n"
-        "<b>📖 Commands (Send in Saved Messages):</b>\n"
+        "<b>📖 Commands:</b>\n"
         "• <code>/copy &lt;link&gt;</code> — Start copy task\n"
         "• <code>/ld</code> — Live Dashboard\n"
         "• <code>/cancel</code> — Stop task\n"
@@ -512,7 +512,7 @@ async def start_copy_command(client: Client, message: Message):
         )
     )
 
-# ==================== ACCURATE & FAST WORKER LOOP ====================
+# ==================== CORE 1-BY-1 VERIFIED WORKER (NO THUMBNAILS) ====================
 async def run_copy_process(
     client: Client,
     notify_message: Message,
@@ -570,8 +570,6 @@ async def run_copy_process(
     active_dashboard_msg = dashboard_msg
     last_dashboard_edit_time = time.time()
 
-    batch_size = 50
-
     while current_id <= last_id:
         if task_cancelled:
             delete_task_progress()
@@ -590,49 +588,42 @@ async def run_copy_process(
                 return
 
         try:
-            batch_end = min(current_id + batch_size - 1, last_id)
-            message_ids = list(range(current_id, batch_end + 1))
+            # Strict 1-by-1 sequential verification loop
+            msg: Message = await client.get_messages(source_chat_obj.id, current_id)
             
-            messages = await client.get_messages(source_chat_obj.id, message_ids)
-            if not isinstance(messages, list):
-                messages = [messages]
+            if msg and not msg.empty and not msg.service:
+                raw_caption = msg.caption or msg.text or ""
+                is_pure_text = bool(msg.text and not msg.media)
+                final_caption, was_branded = process_caption(raw_caption, is_pure_text=is_pure_text)
 
-            for msg in messages:
-                # ACCURATE CHECK: Increment pointer safely per ID checked
-                if msg and not msg.empty and not msg.service:
-                    raw_caption = msg.caption or msg.text or ""
-                    is_pure_text = bool(msg.text and not msg.media)
-                    final_caption, was_branded = process_caption(raw_caption, is_pure_text=is_pure_text)
+                if was_branded:
+                    branded_count += 1
 
-                    if was_branded:
-                        branded_count += 1
+                try:
+                    if msg.video or msg.document or msg.audio or msg.photo or msg.animation:
+                        videos_count += 1
+                    else:
+                        texts_count += 1
 
-                    try:
-                        if msg.video:
-                            videos_count += 1
-                        else:
-                            texts_count += 1
+                    if msg.media:
+                        await client.copy_message(
+                            chat_id=dest_chat_obj.id,
+                            from_chat_id=source_chat_obj.id,
+                            message_id=msg.id,
+                            caption=final_caption,
+                        )
+                    elif msg.text:
+                        await client.send_message(
+                            chat_id=dest_chat_obj.id,
+                            text=final_caption,
+                        )
+                    copied_count += 1
+                except Exception:
+                    pass
 
-                        if msg.media:
-                            await client.copy_message(
-                                chat_id=dest_chat_obj.id,
-                                from_chat_id=source_chat_obj.id,
-                                message_id=msg.id,
-                                caption=final_caption,
-                            )
-                        elif msg.text:
-                            await client.send_message(
-                                chat_id=dest_chat_obj.id,
-                                text=final_caption,
-                            )
-                        copied_count += 1
-                    except Exception:
-                        pass
+                await asyncio.sleep(DELAY_SECONDS)
 
-                    await asyncio.sleep(DELAY_SECONDS)
-
-                current_id += 1
-
+            current_id += 1
             save_progress(
                 str(source_chat), str(dest_chat), start_id, current_id, last_id,
                 copied_count, videos_count, texts_count, branded_count, "RUNNING"
@@ -667,7 +658,7 @@ async def run_copy_process(
         except FloodWait as e:
             await asyncio.sleep(e.value)
         except Exception:
-            current_id += batch_size
+            current_id += 1
 
     task_running = False
     delete_task_progress()
@@ -700,7 +691,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Accurate Userbot is Online & Ready on Railway!")
+    print("✅ Clean Direct Copy Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
