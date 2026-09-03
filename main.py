@@ -4,7 +4,7 @@ import random
 import re
 import sqlite3
 import time
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 
 import nest_asyncio
 import uvicorn
@@ -17,7 +17,6 @@ from pyrogram.errors import (
     FloodWait,
     MessageNotModified,
     PeerIdInvalid,
-    RPCError,
 )
 from pyrogram.types import (
     CallbackQuery,
@@ -38,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "ultimate_dual_mode_v11.db"
+DB_NAME = "ultimate_dual_mode_v12.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -151,7 +150,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "ultimate_dual_mode_v11_session",
+    "ultimate_dual_mode_v12_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -163,7 +162,7 @@ task_cancelled = False
 task_start_time = 0.0
 active_dashboard_msg: Optional[Message] = None
 
-# ==================== UI & UTF-16 ENTITY CAPTION ENGINE ====================
+# ==================== UI & BULLETPROOF QUOTE-STRIP CAPTION ENGINE ====================
 def format_time(seconds: float) -> str:
     seconds = int(max(0, seconds))
     hours, remainder = divmod(seconds, 3600)
@@ -178,13 +177,11 @@ def generate_progress_bar(percentage: float, length: int = 12) -> str:
     empty = length - filled
     return "█" * filled + "░" * empty
 
-def extract_entity_text(text: str, offset: int, length: int) -> str:
-    """Telegram entity offsets UTF-16 code units me hote hain, isliye safe slicing."""
-    utf16 = text.encode("utf-16-le")
-    start = offset * 2
-    end = (offset + length) * 2
-    piece = utf16[start:end]
-    return piece.decode("utf-16-le", errors="ignore")
+def normalize_text_for_compare(text: str) -> str:
+    """Helper to compare text without whitespace discrepancies to avoid MESSAGE_NOT_MODIFIED."""
+    if not text:
+        return ""
+    return re.sub(r'\s+', ' ', text).strip()
 
 def process_caption_custom(
     caption_text: str,
@@ -195,79 +192,67 @@ def process_caption_custom(
     is_pure_text: bool = False,
     entities: Optional[list] = None,
 ) -> Tuple[str, bool]:
-    if enabled.lower() == "off":
-        return caption_text if caption_text else "", False
+    clean_brand = brand.split("➤")[-1].strip() if "➤" in brand else brand
+    clean_prefix = prefix.strip() if prefix else "Extracted By"
 
+    # If empty caption
     if not caption_text:
-        if random.random() < (percentage_val / 100.0):
-            return f"{prefix} ➤ {brand}", True
+        if enabled.lower() != "off" and random.random() < (percentage_val / 100.0):
+            return f"{clean_prefix} ➤ {clean_brand}".strip(), True
         return "", False
 
-    clean_brand = brand.split("➤")[-1].strip() if "➤" in brand else brand
+    # 1. Clean hidden characters, non-breaking spaces, and quote markers (>)
+    raw = caption_text.replace("\u00a0", " ").replace("\u200b", "").replace("\ufeff", "")
+    
+    lines = []
+    was_branded = False
+    
+    creds_pattern = re.compile(
+        r'(?i)(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|credit\s*by|posted\s*by|source\s*by|by)\s*[:➤—–-]?\s*(@?[a-zA-Z0-9_]+(?:\s+[a-zA-Z0-9_]+)?)'
+    )
 
-    # 0. ENTITY-BASED mentions — ORIGINAL caption_text par (UTF-16 safe)
-    replaced_via_entity = False
-    clean_cap = caption_text
+    for line in raw.split("\n"):
+        trimmed = line.strip()
+        # Strip quote marker '>' to normalize quotes into clean plain text
+        if trimmed.startswith(">"):
+            trimmed = trimmed.lstrip("> ").strip()
 
-    if entities:
-        spans = []
-        for ent in entities:
-            etype = str(getattr(ent, "type", "")).lower()
-            if "mention" in etype or "text_link" in etype:
-                try:
-                    piece = extract_entity_text(caption_text, ent.offset, ent.length)
-                except Exception:
-                    continue
-                if piece:
-                    spans.append((ent.offset, ent.length))
+        # Check for "Extracted By : @MRANUJ7" or "Extracted By ➤ Name"
+        if creds_pattern.search(trimmed):
+            trimmed = creds_pattern.sub(f"{clean_prefix} ➤ {clean_brand}", trimmed)
+            was_branded = True
 
-        if spans:
-            utf16 = caption_text.encode("utf-16-le")
-            spans.sort(key=lambda s: s[0])
-            rebuilt = b""
-            cursor = 0
-            for offset, length in spans:
-                start, end = offset * 2, (offset + length) * 2
-                if start < cursor:
-                    continue
-                rebuilt += utf16[cursor:start]
-                rebuilt += clean_brand.encode("utf-16-le")
-                cursor = end
-                replaced_via_entity = True
-            rebuilt += utf16[cursor:]
-            clean_cap = rebuilt.decode("utf-16-le", errors="ignore").replace(">", "").strip()
-
-    if replaced_via_entity:
-        return clean_cap, True
-
-    clean_cap = caption_text.replace(">", "").strip()
-
-    # 1. Plain text @usernames (fallback)
-    usernames = re.findall(r"@[a-zA-Z0-9_]+", clean_cap)
-    if usernames:
-        new_cap = clean_cap
+        # Replace any remaining external @usernames
+        usernames = re.findall(r"@[a-zA-Z0-9_]+", trimmed)
         for u in usernames:
-            new_cap = new_cap.replace(u, clean_brand)
-        return new_cap, True
+            if u.lower() != clean_brand.lower():
+                trimmed = trimmed.replace(u, clean_brand)
+                was_branded = True
 
-    # 2. Smart detection ("Extracted By : @X" or "Extracted By : Name")
-    pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
-    if pattern.search(clean_cap):
-        new_cap = pattern.sub(rf'\1 ➤ {clean_brand}', clean_cap)
-        return new_cap, True
+        lines.append(trimmed)
 
-    # 3. Short titles protection
+    rebuilt_text = "\n".join(lines).strip()
+
+    # If already branded via username / creds replacement, return immediately (100%)
+    if was_branded:
+        return rebuilt_text, True
+
+    # If watermark is turned off
+    if enabled.lower() == "off":
+        return rebuilt_text, False
+
+    # Short titles protection
     if is_pure_text:
-        txt_chk = clean_cap.strip()
-        if len(txt_chk) <= 30 or txt_chk.lower() in ["welcome", "complete", "notes", "index", "module"]:
-            return clean_cap, False
+        txt_chk = rebuilt_text.lower()
+        if len(rebuilt_text) <= 30 or any(k in txt_chk for k in ["welcome", "complete", "notes", "index", "module", "chapter"]):
+            return rebuilt_text, False
 
-    # 4. Percentage roll
+    # 3. Custom Percentage Roll (e.g. 40% or 100%)
     if random.random() < (percentage_val / 100.0):
-        watermark_str = f"{prefix} ➤ {clean_brand}".strip()
-        return f"{clean_cap}\n\n{watermark_str}", True
+        watermark_str = f"{clean_prefix} ➤ {clean_brand}".strip()
+        return f"{rebuilt_text}\n\n{watermark_str}", True
 
-    return clean_cap, False
+    return rebuilt_text, False
 
 def render_dashboard(
     mode_title: str,
@@ -304,7 +289,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        f"<b>🚀 {mode_title} LIVE DASHBOARD V11</b>\n"
+        f"<b>🚀 {mode_title} LIVE DASHBOARD</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source/Channel:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target Destination:</b> <code>{dest_chat}</code>\n"
@@ -394,21 +379,25 @@ async def start_command(client: Client, message: Message):
     target2 = get_config("mode2_target", "❌ Not Set")
     brand1 = get_config("brand_name", "@skillneast1")
     brand2 = get_config("mode2_brand", "@skillneast1")
+    pct1 = get_config("brand_percentage", "40")
+    pct2 = get_config("mode2_brand_percentage", "40")
     m2_live = get_config("mode2_live_active", "off")
 
     welcome_text = (
-        "<b>🤖 Ultimate Dual-Mode Userbot V11 Active</b>\n"
+        "<b>🤖 Ultimate Dual-Mode Userbot Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎯 <b>Mode 1 Target:</b> <code>{target1}</code> | Brand: <code>{brand1}</code>\n"
-        f"🎯 <b>Mode 2 Target:</b> <code>{target2}</code> | Brand: <code>{brand2}</code>\n"
+        f"🎯 <b>Mode 1 Target:</b> <code>{target1}</code> | Brand: <code>{brand1}</code> ({pct1}%)\n"
+        f"🎯 <b>Mode 2 Target:</b> <code>{target2}</code> | Brand: <code>{brand2}</code> ({pct2}%)\n"
         f"⚡ <b>Mode 2 Live Auto-Watermark:</b> <code>{m2_live.upper()}</code>\n\n"
-        "<b>📖 Commands (Send in Saved Messages / DM):</b>\n"
-        "• <code>/copy &lt;link&gt;</code> — Mode 1 (Copy & Paste to Target 1)\n"
+        "<b>📖 Commands:</b>\n"
+        "• <code>/copy &lt;link&gt;</code> — Mode 1 (Copy & Paste)\n"
         "• <code>/mode2 &lt;link&gt; &lt;start&gt;-&lt;end&gt;</code> — Mode 2 (Edit in-place)\n"
-        "• <code>/mode2live on</code> or <code>off</code> — Auto-watermark incoming files\n"
+        "• <code>/setpercentage 40</code> (or 100 for all files)\n"
+        "• <code>/setpercentage2 40</code> (for Mode 2)\n"
+        "• <code>/getpercentage</code> — View current percentages\n"
         "• <code>/settarget &lt;id&gt;</code> | <code>/settarget2 &lt;id&gt;</code>\n"
         "• <code>/setbrand &lt;name&gt;</code> | <code>/setbrand2 &lt;name&gt;</code>\n"
-        "• <code>/setprefix &lt;text&gt;</code> | <code>/setpercentage 40</code>\n"
+        "• <code>/setprefix &lt;text&gt;</code> | <code>/setprefix2 &lt;text&gt;</code>\n"
         "• <code>/ld</code> (Live Dashboard) | <code>/cancel</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -564,12 +553,32 @@ async def set_percentage_cmd(client: Client, message: Message):
     args = message.text.split()
     if len(args) < 2: return
     try:
-        pct = int(args[1].strip())
+        pct = max(0, min(100, int(args[1].strip())))
         set_config("brand_percentage", str(pct))
-        set_config("mode2_brand_percentage", str(pct))
-        await message.reply_text(f"✅ Watermark percentage set to: <code>{pct}%</code>")
+        await message.reply_text(f"✅ Mode 1 Watermark percentage set to: <code>{pct}%</code>")
     except ValueError:
         pass
+
+@app.on_message(COMMAND_FILTER & filters.command(["setpercentage2"], prefixes=["/", "."]))
+async def set_percentage2_cmd(client: Client, message: Message):
+    args = message.text.split()
+    if len(args) < 2: return
+    try:
+        pct = max(0, min(100, int(args[1].strip())))
+        set_config("mode2_brand_percentage", str(pct))
+        await message.reply_text(f"✅ Mode 2 Watermark percentage set to: <code>{pct}%</code>")
+    except ValueError:
+        pass
+
+@app.on_message(COMMAND_FILTER & filters.command(["getpercentage"], prefixes=["/", "."]))
+async def get_percentage_cmd(client: Client, message: Message):
+    pct1 = get_config("brand_percentage", "40")
+    pct2 = get_config("mode2_brand_percentage", "40")
+    await message.reply_text(
+        f"📊 <b>Active Percentage Settings:</b>\n\n"
+        f"• <b>Mode 1 (/copy):</b> <code>{pct1}%</code>\n"
+        f"• <b>Mode 2 (/mode2):</b> <code>{pct2}%</code>"
+    )
 
 @app.on_callback_query()
 async def handle_callbacks(client: Client, callback: CallbackQuery):
@@ -720,22 +729,23 @@ async def mode2_live_listener(client: Client, message: Message):
             entities=raw_entities,
         )
 
-        if was_branded:
+        # Only edit if text actually changed to completely prevent MESSAGE_NOT_MODIFIED
+        if was_branded and normalize_text_for_compare(raw_caption) != normalize_text_for_compare(final_caption):
             try:
                 if message.media:
-                    if message.caption != final_caption:
-                        await client.edit_message_caption(
-                            chat_id=target_id,
-                            message_id=message.id,
-                            caption=final_caption
-                        )
+                    await client.edit_message_caption(
+                        chat_id=target_id,
+                        message_id=message.id,
+                        caption=final_caption
+                    )
                 elif message.text:
-                    if message.text != final_caption:
-                        await client.edit_message_text(
-                            chat_id=target_id,
-                            message_id=message.id,
-                            text=final_caption
-                        )
+                    await client.edit_message_text(
+                        chat_id=target_id,
+                        message_id=message.id,
+                        text=final_caption
+                    )
+            except MessageNotModified:
+                pass
             except Exception as e:
                 print(f"❌ [Mode 2 Live Listener Edit Failed]: {e}")
 
@@ -854,22 +864,29 @@ async def run_copy_process(
                 try:
                     if is_mode2:
                         # ==================== MODE 2: IN-PLACE EDIT ====================
-                        if msg.media:
-                            videos_count += 1
-                            if msg.caption != final_caption:
+                        # Smart check: only call Telegram API if text genuinely changed
+                        if normalize_text_for_compare(raw_caption) != normalize_text_for_compare(final_caption):
+                            if msg.media:
+                                videos_count += 1
                                 await client.edit_message_caption(
                                     chat_id=dest_chat_obj.id,
                                     message_id=msg.id,
                                     caption=final_caption
                                 )
-                        elif msg.text:
-                            texts_count += 1
-                            if msg.text != final_caption:
+                            elif msg.text:
+                                texts_count += 1
                                 await client.edit_message_text(
                                     chat_id=dest_chat_obj.id,
                                     message_id=msg.id,
                                     text=final_caption
                                 )
+                        else:
+                            # Caption was already clean / unchanged, count it without calling API
+                            if msg.media:
+                                videos_count += 1
+                            else:
+                                texts_count += 1
+
                         copied_count += 1
                     else:
                         # ==================== MODE 1: COPY & PASTE ====================
@@ -891,8 +908,10 @@ async def run_copy_process(
                                 text=final_caption,
                             )
                         copied_count += 1
+                except MessageNotModified:
+                    # Message content was already exact match, ignore safely
+                    copied_count += 1
                 except Exception as op_err:
-                    # Clear print so you see exactly what Telegram says
                     print(f"❌ [{'Mode 2 (Edit)' if is_mode2 else 'Mode 1 (Copy)'} FAILED on msg {msg.id}]: {type(op_err).__name__} -> {op_err}")
 
                 await asyncio.sleep(DELAY_SECONDS)
@@ -903,8 +922,9 @@ async def run_copy_process(
                 copied_count, videos_count, texts_count, branded_count, "RUNNING"
             )
 
+            # Dashboard Edit Interval (10.0 seconds to prevent Telegram Edit FloodWait)
             now = time.time()
-            if (now - last_dashboard_edit_time >= 5.0) or (current_id > last_id):
+            if (now - last_dashboard_edit_time >= 10.0) or (current_id > last_id):
                 last_dashboard_edit_time = time.time()
                 updated_card, updated_keyboard = render_dashboard(
                     mode_title=mode_title,
@@ -971,7 +991,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Ultimate Dual-Mode V11 Userbot is Online & Ready on Railway!")
+    print("✅ Ultimate Dual-Mode V12 Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
