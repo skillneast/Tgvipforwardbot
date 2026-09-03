@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_clean_copy_userbot.db"
+DB_NAME = "final_fixed_media_userbot.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -67,8 +67,8 @@ def init_db():
             status TEXT
         )
     """)
-    cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('brand_name', '@skillneast1')")
-    cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('caption_prefix', 'Extracted By')")
+    cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('brand_name', '𝐄𝐗𝐓𝐑𝐀𝐂𝐓𝐄𝐃 𝐁𝐘 ➤ @VOIDPABLO')")
+    cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('caption_prefix', '')")
     conn.commit()
     conn.close()
 
@@ -137,7 +137,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "final_clean_copy_session",
+    "final_fixed_media_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -165,24 +165,24 @@ def generate_progress_bar(percentage: float, length: int = 12) -> str:
     return "█" * filled + "░" * empty
 
 def process_caption(caption_text: str, is_pure_text: bool = False) -> Tuple[str, bool]:
-    brand = get_config("brand_name", "@skillneast1")
-    prefix = get_config("caption_prefix", "Extracted By")
+    brand = get_config("brand_name", "𝐄𝐗𝐓𝐑𝐀𝐂𝐓𝐄𝐃 𝐁𝐘 ➤ @VOIDPABLO")
+    prefix = get_config("caption_prefix", "")
 
     if not caption_text:
         if random.random() < 0.40:
-            return f"{prefix} ➤ {brand}", True
+            return f"{prefix} {brand}".strip(), True
         return "", False
 
     usernames = re.findall(r"@[a-zA-Z0-9_]+", caption_text)
     if usernames:
         new_cap = caption_text
         for u in usernames:
-            new_cap = new_cap.replace(u, brand)
+            new_cap = new_cap.replace(u, brand.split("➤")[-1].strip() if "➤" in brand else brand)
         return new_cap, True
 
     pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
     if pattern.search(caption_text):
-        new_cap = pattern.sub(rf'\1 ➤ {brand}', caption_text)
+        new_cap = pattern.sub(rf'\1 ➤ {brand.split("➤")[-1].strip() if "➤" in brand else brand}', caption_text)
         return new_cap, True
 
     if is_pure_text:
@@ -191,7 +191,8 @@ def process_caption(caption_text: str, is_pure_text: bool = False) -> Tuple[str,
             return caption_text, False
 
     if random.random() < 0.40:
-        return f"{caption_text}\n\n{prefix} ➤ {brand}", True
+        watermark_str = f"{prefix} {brand}".strip()
+        return f"{caption_text}\n\n{watermark_str}", True
 
     return caption_text, False
 
@@ -199,7 +200,6 @@ def render_dashboard(
     source_chat: str,
     dest_chat: str,
     brand: str,
-    prefix: str,
     start_id: int,
     current_id: int,
     last_id: int,
@@ -229,11 +229,11 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        "<b>🚀 CLEAN DIRECT COPY DASHBOARD</b>\n"
+        "<b>🚀 MEDIA FIXED DASHBOARD</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target:</b> <code>{dest_chat}</code>\n"
-        f"🎨 <b>Watermark:</b> <code>{prefix} ➤ {brand}</code>\n"
+        f"🎨 <b>Watermark:</b> <code>{brand}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 <b>PROGRESS:</b> <code>[{bar}]</code> <b>{percentage}%</b>\n\n"
         f"🔢 <b>Current ID:</b> <code>{current_id}</code> / <code>{last_id}</code>\n"
@@ -314,21 +314,19 @@ ALLOWED_FILTER = (filters.me | filters.private)
 @app.on_message(ALLOWED_FILTER & filters.command(["start", "help"], prefixes=["/", "."]))
 async def start_command(client: Client, message: Message):
     target = get_config("target_chat", "❌ Not Set")
-    brand = get_config("brand_name", "@skillneast1")
-    prefix = get_config("caption_prefix", "Extracted By")
+    brand = get_config("brand_name", "𝐄𝐗𝐓𝐑𝐀𝐂𝐓𝐄𝐃 𝐁𝐘 ➤ @VOIDPABLO")
 
     welcome_text = (
-        "<b>🤖 Clean Direct Copy Userbot Active</b>\n"
+        "<b>🤖 Media Fixed Userbot Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Target:</b> <code>{target}</code>\n"
-        f"🎨 <b>Watermark:</b> <code>{prefix} ➤ {brand}</code>\n\n"
+        f"🎨 <b>Watermark:</b> <code>{brand}</code>\n\n"
         "<b>📖 Commands:</b>\n"
         "• <code>/copy &lt;link&gt;</code> — Start copy task\n"
         "• <code>/ld</code> — Live Dashboard\n"
         "• <code>/cancel</code> — Stop task\n"
         "• <code>/settarget &lt;id&gt;</code> — Set destination channel\n"
         "• <code>/setbrand &lt;name&gt;</code> — Set custom brand name\n"
-        "• <code>/setprefix &lt;text&gt;</code> — Set custom prefix\n"
         "• <code>/sync</code> — Sync channel cache\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -364,8 +362,7 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
     global active_dashboard_msg
     saved = get_progress()
     target_config = get_config("target_chat", "❌ Not Set")
-    brand = get_config("brand_name", "@skillneast1")
-    prefix = get_config("caption_prefix", "Extracted By")
+    brand = get_config("brand_name", "𝐄𝐗𝐓𝐑𝐀𝐂𝐓𝐄𝐃 𝐁𝐘 ➤ @VOIDPABLO")
 
     if task_running or (saved and saved[10] in ["RUNNING", "PAUSED"]):
         (
@@ -377,7 +374,7 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
             source_chat=source_chat,
             dest_chat=dest_chat,
             brand=brand,
-            prefix=prefix,
+            prefix="",
             start_id=start_id,
             current_id=current_id,
             last_id=last_id,
@@ -447,14 +444,6 @@ async def set_brand_cmd(client: Client, message: Message):
     set_config("brand_name", args[1].strip())
     await message.reply_text(f"✅ Brand set to: <code>{args[1].strip()}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["setprefix"], prefixes=["/", "."]))
-async def set_prefix_cmd(client: Client, message: Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        return
-    set_config("caption_prefix", args[1].strip())
-    await message.reply_text(f"✅ Prefix set to: <code>{args[1].strip()}</code>")
-
 @app.on_callback_query()
 async def handle_callbacks(client: Client, callback: CallbackQuery):
     global is_paused, task_running, task_cancelled, task_start_time
@@ -512,7 +501,7 @@ async def start_copy_command(client: Client, message: Message):
         )
     )
 
-# ==================== CORE 1-BY-1 VERIFIED WORKER (NO THUMBNAILS) ====================
+# ==================== CORE 1-BY-1 SAFE MEDIA WORKER ====================
 async def run_copy_process(
     client: Client,
     notify_message: Message,
@@ -539,8 +528,7 @@ async def run_copy_process(
         task_running = False
         return
 
-    brand = get_config("brand_name", "@skillneast1")
-    prefix = get_config("caption_prefix", "Extracted By")
+    brand = get_config("brand_name", "𝐄𝐗𝐓𝐑𝐀𝐂𝐓𝐄𝐃 𝐁𝐘 ➤ @VOIDPABLO")
     current_id = current_start
     copied_count = initial_copied_count
     videos_count = initial_videos_count
@@ -551,7 +539,7 @@ async def run_copy_process(
         source_chat=str(source_chat),
         dest_chat=str(dest_chat),
         brand=brand,
-        prefix=prefix,
+        prefix="",
         start_id=start_id,
         current_id=current_id,
         last_id=last_id,
@@ -588,7 +576,7 @@ async def run_copy_process(
                 return
 
         try:
-            # Strict 1-by-1 sequential verification loop
+            # 1-by-1 safe sequential fetch ensuring NO media gets silently skipped
             msg: Message = await client.get_messages(source_chat_obj.id, current_id)
             
             if msg and not msg.empty and not msg.service:
@@ -600,12 +588,8 @@ async def run_copy_process(
                     branded_count += 1
 
                 try:
-                    if msg.video or msg.document or msg.audio or msg.photo or msg.animation:
-                        videos_count += 1
-                    else:
-                        texts_count += 1
-
                     if msg.media:
+                        videos_count += 1
                         await client.copy_message(
                             chat_id=dest_chat_obj.id,
                             from_chat_id=source_chat_obj.id,
@@ -613,13 +597,31 @@ async def run_copy_process(
                             caption=final_caption,
                         )
                     elif msg.text:
+                        texts_count += 1
                         await client.send_message(
                             chat_id=dest_chat_obj.id,
                             text=final_caption,
                         )
                     copied_count += 1
-                except Exception:
-                    pass
+                except Exception as media_err:
+                    # If direct copy fails, fallback to download & re-upload to ensure media is NEVER skipped
+                    if msg.media:
+                        try:
+                            file_path = await client.download_media(msg)
+                            if file_path:
+                                if msg.video:
+                                    await client.send_video(dest_chat_obj.id, video=file_path, caption=final_caption)
+                                elif msg.photo:
+                                    await client.send_photo(dest_chat_obj.id, photo=file_path, caption=final_caption)
+                                elif msg.document:
+                                    await client.send_document(dest_chat_obj.id, document=file_path, caption=final_caption)
+                                elif msg.audio:
+                                    await client.send_audio(dest_chat_obj.id, audio=file_path, caption=final_caption)
+                                copied_count += 1
+                                if os.path.exists(file_path):
+                                    os.remove(file_path)
+                        except Exception:
+                            pass
 
                 await asyncio.sleep(DELAY_SECONDS)
 
@@ -636,7 +638,7 @@ async def run_copy_process(
                     source_chat=str(source_chat),
                     dest_chat=str(dest_chat),
                     brand=brand,
-                    prefix=prefix,
+                    prefix="",
                     start_id=start_id,
                     current_id=min(current_id, last_id),
                     last_id=last_id,
@@ -667,7 +669,7 @@ async def run_copy_process(
         source_chat=str(source_chat),
         dest_chat=str(dest_chat),
         brand=brand,
-        prefix=prefix,
+        prefix="",
         start_id=start_id,
         current_id=last_id,
         last_id=last_id,
@@ -680,18 +682,18 @@ async def run_copy_process(
     )
     try:
         if active_dashboard_msg:
-            await active_dashboard_msg.edit_text(completed_card, reply_markup=completed_keyboard, disable_web_page_preview=True)
+            active_dashboard_msg.edit_text(completed_card, reply_markup=completed_keyboard, disable_web_page_preview=True)
         else:
-            await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
+            notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
     except Exception:
-        await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
+        notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
 
 # ==================== RUNNER ====================
 async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Clean Direct Copy Userbot is Online & Ready on Railway!")
+    print("✅ Media-Fixed Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
