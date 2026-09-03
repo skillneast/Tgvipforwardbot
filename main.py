@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "ultimate_dual_mode_v5.db"
+DB_NAME = "ultimate_dual_mode_v6.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -150,7 +150,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "ultimate_dual_mode_v5_session",
+    "ultimate_dual_mode_v6_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -162,7 +162,7 @@ task_cancelled = False
 task_start_time = 0.0
 active_dashboard_msg: Optional[Message] = None
 
-# ==================== UI & BULLETPROOF QUOTED-CAPTION LOGIC ====================
+# ==================== UI & SMART QUOTED-CAPTION LOGIC ====================
 def format_time(seconds: float) -> str:
     seconds = int(max(0, seconds))
     hours, remainder = divmod(seconds, 3600)
@@ -193,10 +193,8 @@ def process_caption_custom(
             return f"{prefix} ➤ {brand}", True
         return "", False
 
-    # Normalize/Clean Quoted or Markdown characters to make regex 100% robust
     clean_cap = caption_text.replace(">", "").strip()
 
-    # 1. 100% Replace existing @usernames (Even inside Quotes)
     usernames = re.findall(r"@[a-zA-Z0-9_]+", clean_cap)
     if usernames:
         new_cap = clean_cap
@@ -204,19 +202,16 @@ def process_caption_custom(
             new_cap = new_cap.replace(u, brand.split("➤")[-1].strip() if "➤" in brand else brand)
         return new_cap, True
 
-    # 2. Smart Detection for Quoted or Normal "Extracted By : @MRANUJ7" or "Extracted By ➤ Name"
     pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
     if pattern.search(clean_cap):
         new_cap = pattern.sub(rf'\1 ➤ {brand.split("➤")[-1].strip() if "➤" in brand else brand}', clean_cap)
         return new_cap, True
 
-    # 3. Short titles protection
     if is_pure_text:
         txt_chk = clean_cap.strip()
         if len(txt_chk) <= 30 or txt_chk.lower() in ["welcome", "complete", "notes", "index", "module"]:
             return clean_cap, False
 
-    # 4. Custom Percentage Roll (e.g. 40%)
     if random.random() < (percentage_val / 100.0):
         watermark_str = f"{prefix} ➤ {brand}".strip()
         return f"{clean_cap}\n\n{watermark_str}", True
@@ -258,7 +253,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        f"<b>🚀 {mode_title} LIVE DASHBOARD V5</b>\n"
+        f"<b>🚀 {mode_title} LIVE DASHBOARD V6</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source/Channel:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target Destination:</b> <code>{dest_chat}</code>\n"
@@ -349,7 +344,7 @@ async def start_command(client: Client, message: Message):
     m2_live = get_config("mode2_live_active", "off")
 
     welcome_text = (
-        "<b>🤖 Ultimate Dual-Mode Userbot V5 Active</b>\n"
+        "<b>🤖 Ultimate Dual-Mode Userbot V6 Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Mode 1 Target:</b> <code>{target1}</code> | Brand: <code>{brand1}</code>\n"
         f"🎯 <b>Mode 2 Target:</b> <code>{target2}</code> | Brand: <code>{brand2}</code>\n"
@@ -779,7 +774,7 @@ async def run_copy_process(
 
             now = time.time()
             if (now - last_dashboard_edit_time >= 5.0) or (current_id > last_id):
-                last_dashboard_edit_time = time.time()
+                last_dashboard_edit_time = now
                 updated_card, updated_keyboard = render_dashboard(
                     mode_title=mode_title,
                     source_chat=str(source_chat),
@@ -830,18 +825,18 @@ async def run_copy_process(
     )
     try:
         if active_dashboard_msg:
-            active_dashboard_msg.edit_text(completed_card, reply_markup=completed_keyboard, disable_web_page_preview=True)
+            await active_dashboard_msg.edit_text(completed_card, reply_markup=completed_keyboard, disable_web_page_preview=True)
         else:
-            notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
+            await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
     except Exception:
-        notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
+        await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
 
 # ==================== RUNNER ====================
 async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Ultimate Dual-Mode V5 Userbot is Online & Ready on Railway!")
+    print("✅ Ultimate Dual-Mode V6 Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
