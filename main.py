@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "ultimate_dual_mode_v2.db"
+DB_NAME = "ultimate_live_watcher_v3.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -67,7 +67,6 @@ def init_db():
             status TEXT
         )
     """)
-    # Default Configurations
     defaults = {
         'brand_name': '@skillneast1',
         'caption_prefix': 'Extracted By',
@@ -78,7 +77,8 @@ def init_db():
         'brand_enabled': 'on',
         'brand_percentage': '40',
         'mode2_brand_enabled': 'on',
-        'mode2_brand_percentage': '40'
+        'mode2_brand_percentage': '40',
+        'mode2_live_status': 'off'
     }
     for k, v in defaults.items():
         cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", (k, v))
@@ -150,7 +150,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "ultimate_dual_mode_v2_session",
+    "ultimate_live_watcher_v3_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -193,6 +193,7 @@ def process_caption_custom(
             return f"{prefix} ➤ {brand}", True
         return "", False
 
+    # 1. Replace existing @usernames (100%)
     usernames = re.findall(r"@[a-zA-Z0-9_]+", caption_text)
     if usernames:
         new_cap = caption_text
@@ -200,16 +201,19 @@ def process_caption_custom(
             new_cap = new_cap.replace(u, brand.split("➤")[-1].strip() if "➤" in brand else brand)
         return new_cap, True
 
+    # 2. Smart Detection for "Extracted By ➤ Name"
     pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
     if pattern.search(caption_text):
         new_cap = pattern.sub(rf'\1 ➤ {brand.split("➤")[-1].strip() if "➤" in brand else brand}', caption_text)
         return new_cap, True
 
+    # 3. Short titles protection
     if is_pure_text:
         clean_txt = caption_text.strip()
         if len(clean_txt) <= 30 or clean_txt.lower() in ["welcome", "complete", "notes", "index", "module"]:
             return caption_text, False
 
+    # 4. Custom Percentage Roll (e.g. 40% or 100%)
     if random.random() < (percentage_val / 100.0):
         watermark_str = f"{prefix} ➤ {brand}".strip()
         return f"{caption_text}\n\n{watermark_str}", True
@@ -330,6 +334,57 @@ async def start_web_server():
     server = uvicorn.Server(config)
     await server.serve()
 
+# ==================== REAL-TIME LIVE LISTENER FOR MODE 2 LIVE ====================
+@app.on_message(filters.channel)
+async def live_channel_watcher(client: Client, message: Message):
+    live_status = get_config("mode2_live_status", "off")
+    if live_status.lower() != "on":
+        return
+
+    target2 = get_config("mode2_target", "")
+    if not target2:
+        return
+
+    # Check if incoming message is from our target channel
+    if str(message.chat.id) != str(target2):
+        return
+
+    brand = get_config("mode2_brand", "@skillneast1")
+    prefix = get_config("mode2_prefix", "Extracted By")
+    enabled = get_config("mode2_brand_enabled", "on")
+    pct = int(get_config("mode2_brand_percentage", "40"))
+
+    try:
+        raw_caption = message.caption or message.text or ""
+        is_pure_text = bool(message.text and not message.media)
+
+        final_caption, was_branded = process_caption_custom(
+            raw_caption,
+            brand=brand,
+            prefix=prefix,
+            enabled=enabled,
+            percentage_val=pct,
+            is_pure_text=is_pure_text
+        )
+
+        if was_branded:
+            if message.media:
+                if message.caption != final_caption:
+                    await client.edit_message_caption(
+                        chat_id=message.chat.id,
+                        message_id=message.id,
+                        caption=final_caption
+                    )
+            elif message.text:
+                if message.text != final_caption:
+                    await client.edit_message_text(
+                        chat_id=message.chat.id,
+                        message_id=message.id,
+                        text=final_caption
+                    )
+    except Exception as e:
+        print(f"⚠️ Live Watcher Edit Error: {e}")
+
 # ==================== COMMAND HANDLERS ====================
 ALLOWED_FILTER = (filters.me | filters.private)
 
@@ -339,15 +394,18 @@ async def start_command(client: Client, message: Message):
     target2 = get_config("mode2_target", "❌ Not Set")
     brand1 = get_config("brand_name", "@skillneast1")
     brand2 = get_config("mode2_brand", "@skillneast1")
+    live_st = get_config("mode2_live_status", "off").upper()
 
     welcome_text = (
-        "<b>🤖 Ultimate Dual-Mode Userbot Active</b>\n"
+        "<b>🤖 Ultimate Dual-Mode V3 Userbot Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Mode 1 Target:</b> <code>{target1}</code> | Brand: <code>{brand1}</code>\n"
-        f"🎯 <b>Mode 2 Target:</b> <code>{target2}</code> | Brand: <code>{brand2}</code>\n\n"
+        f"🎯 <b>Mode 2 Target:</b> <code>{target2}</code> | Brand: <code>{brand2}</code>\n"
+        f"⚡ <b>Mode 2 Live Watcher:</b> <code>{live_st}</code>\n\n"
         "<b>📖 Commands:</b>\n"
-        "• <code>/copy &lt;link&gt;</code> — Mode 1 (Copy & Paste to Target 1)\n"
-        "• <code>/mode2 &lt;link&gt; &lt;start&gt;-&lt;end&gt;</code> — Mode 2 (Edit in-place in Target 2)\n"
+        "• <code>/copy &lt;link&gt;</code> — Mode 1 Copy\n"
+        "• <code>/mode2 &lt;link&gt; &lt;start&gt;-&lt;end&gt;</code> — Mode 2 Range Edit\n"
+        "• <code>/mode2live on / off</code> — Instant Auto-Watermark Listener\n"
         "• <code>/settarget &lt;id&gt;</code> / <code>/settarget2 &lt;id&gt;</code>\n"
         "• <code>/setbrand &lt;name&gt;</code> / <code>/setbrand2 &lt;name&gt;</code>\n"
         "• <code>/setprefix &lt;text&gt;</code> / <code>/setprefix2 &lt;text&gt;</code>\n"
@@ -408,7 +466,16 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
             start_time=task_start_time,
         )
     else:
-        card_text = "<b>📊 Live Dashboard:</b> No active task running."
+        live_st = get_config("mode2_live_status", "off").upper()
+        t2 = get_config("mode2_target", "Not Set")
+        card_text = (
+            f"<b>📊 Live Dashboard Status</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "ℹ️ <i>No background copy/edit task running.</i>\n\n"
+            f"⚡ <b>Mode 2 Live Watcher:</b> <code>{live_st}</code>\n"
+            f"🎯 <b>Mode 2 Target Channel:</b> <code>{t2}</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data="btn_status")]])
 
     if isinstance(target_ctx, Message):
@@ -422,34 +489,17 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
             pass
         await target_ctx.answer("Refreshed")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["pause"], prefixes=["/", "."]))
-async def pause_task(client: Client, message: Message):
-    global is_paused
-    if task_running:
-        is_paused = True
-        await message.reply_text("⏸️ <b>Task Paused.</b>")
-
-@app.on_message(ALLOWED_FILTER & filters.command(["resume"], prefixes=["/", "."]))
-async def resume_task(client: Client, message: Message):
-    global is_paused, task_running, task_start_time, task_cancelled
-    if not task_running:
-        saved = get_progress()
-        if saved and saved[10] == "PAUSED":
-            (
-                source_chat, dest_chat, start_id, current_id, last_id,
-                copied_count, videos_count, texts_count, branded_count, _
-            ) = saved
-            is_paused = False
-            task_cancelled = False
-            task_start_time = time.time()
-            is_m2 = (str(source_chat) == str(dest_chat))
-            asyncio.create_task(
-                run_copy_process(
-                    client, message, source_chat, dest_chat, start_id, current_id, last_id,
-                    copied_count, videos_count, texts_count, branded_count, is_mode2=is_m2
-                )
-            )
-            await message.reply_text(f"▶️ <b>Resuming from ID:</b> <code>{current_id}</code>")
+@app.on_message(ALLOWED_FILTER & filters.command(["mode2live"], prefixes=["/", "."]))
+async def mode2_live_cmd(client: Client, message: Message):
+    args = message.text.split()
+    if len(args) < 2:
+        st = get_config("mode2_live_status", "off")
+        await message.reply_text(f"ℹ️ Mode 2 Live Watcher is currently: <code>{st.upper()}</code>\nUsage: <code>/mode2live on</code> or <code>off</code>")
+        return
+    val = args[1].strip().lower()
+    if val in ["on", "off"]:
+        set_config("mode2_live_status", val)
+        await message.reply_text(f"✅ Mode 2 Live Watcher set to: <code>{val.upper()}</code>")
 
 @app.on_message(ALLOWED_FILTER & filters.command(["settarget"], prefixes=["/", "."]))
 async def set_target_cmd(client: Client, message: Message):
@@ -735,7 +785,6 @@ async def run_copy_process(
 
                 try:
                     if is_mode2:
-                        # ==================== MODE 2: IN-PLACE EDIT ====================
                         if msg.media:
                             videos_count += 1
                             if msg.caption != final_caption:
@@ -754,7 +803,6 @@ async def run_copy_process(
                                 )
                         copied_count += 1
                     else:
-                        # ==================== MODE 1: COPY & PASTE ====================
                         if msg.media:
                             videos_count += 1
                         else:
@@ -837,18 +885,21 @@ async def run_copy_process(
     )
     try:
         if active_dashboard_msg:
-            active_dashboard_msg.edit_text(completed_card, reply_markup=completed_keyboard, disable_web_page_preview=True)
+            await active_dashboard_msg.edit_text(completed_card, reply_markup=completed_keyboard, disable_web_page_preview=True)
         else:
-            notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
+            await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
     except Exception:
-        notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
+        await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
 
 # ==================== RUNNER ====================
 async def main():
+    # Ignore background updates from unknown/invalid channels to prevent crash
+    app.no_updates = True
+    
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Ultimate Dual-Mode V2 Userbot is Online & Ready on Railway!")
+    print("✅ Ultimate Live-Watcher V3 Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
