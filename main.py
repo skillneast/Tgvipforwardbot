@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_fixed_type_userbot.db"
+DB_NAME = "final_bulletproof_userbot.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -137,7 +137,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "final_fixed_type_session",
+    "bulletproof_userbot_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -230,7 +230,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        "<b>🚀 MEDIA FIXED DASHBOARD</b>\n"
+        "<b>🚀 BULLETPROOF USERBOT DASHBOARD</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target:</b> <code>{dest_chat}</code>\n"
@@ -318,7 +318,7 @@ async def start_command(client: Client, message: Message):
     brand = get_config("brand_name", "𝐄𝐗𝐓𝐑𝐀𝐂𝐓𝐄𝐃 𝐁𝐘 ➤ @VOIDPABLO")
 
     welcome_text = (
-        "<b>🤖 Media Fixed Userbot Active</b>\n"
+        "<b>🤖 Bulletproof Userbot Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Target:</b> <code>{target}</code>\n"
         f"🎨 <b>Watermark:</b> <code>{brand}</code>\n\n"
@@ -502,7 +502,7 @@ async def start_copy_command(client: Client, message: Message):
         )
     )
 
-# ==================== CORE 1-BY-1 SAFE MEDIA WORKER ====================
+# ==================== BULLETPROOF WORKER WITH AUTO-SYNC ====================
 async def run_copy_process(
     client: Client,
     notify_message: Message,
@@ -521,11 +521,22 @@ async def run_copy_process(
     is_paused = False
     task_cancelled = False
 
+    # Auto-Resolve Chat Objects with Peer Sync Fallback
     try:
         source_chat_obj = await client.get_chat(source_chat)
         dest_chat_obj = await client.get_chat(dest_chat)
+    except (PeerIdInvalid, ValueError):
+        await notify_message.reply_text("🔄 Resolving channel peer, syncing dialogs...")
+        await sync_dialogs(client)
+        try:
+            source_chat_obj = await client.get_chat(source_chat)
+            dest_chat_obj = await client.get_chat(dest_chat)
+        except Exception as e:
+            await notify_message.reply_text(f"❌ <b>Chat Access Error:</b> <code>{e}</code>")
+            task_running = False
+            return
     except Exception as e:
-        await notify_message.reply_text(f"❌ Chat Access Error: `{e}`")
+        await notify_message.reply_text(f"❌ <b>Chat Access Error:</b> <code>{e}</code>")
         task_running = False
         return
 
@@ -692,7 +703,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Media-Fixed Userbot is Online & Ready on Railway!")
+    print("✅ Bulletproof Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
