@@ -17,6 +17,7 @@ from pyrogram.errors import (
     FloodWait,
     MessageNotModified,
     PeerIdInvalid,
+    RPCError,
 )
 from pyrogram.types import (
     CallbackQuery,
@@ -37,7 +38,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "ultimate_dual_mode_v10.db"
+DB_NAME = "ultimate_dual_mode_v11.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -150,7 +151,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "ultimate_dual_mode_v10_session",
+    "ultimate_dual_mode_v11_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -202,11 +203,12 @@ def process_caption_custom(
             return f"{prefix} ➤ {brand}", True
         return "", False
 
-    clean_cap = caption_text.replace(">", "").strip()
     clean_brand = brand.split("➤")[-1].strip() if "➤" in brand else brand
 
-    # 0. ENTITY-BASED mentions — ORIGINAL caption_text par, clean_cap par nahi!
+    # 0. ENTITY-BASED mentions — ORIGINAL caption_text par (UTF-16 safe)
     replaced_via_entity = False
+    clean_cap = caption_text
+
     if entities:
         spans = []
         for ent in entities:
@@ -238,6 +240,8 @@ def process_caption_custom(
     if replaced_via_entity:
         return clean_cap, True
 
+    clean_cap = caption_text.replace(">", "").strip()
+
     # 1. Plain text @usernames (fallback)
     usernames = re.findall(r"@[a-zA-Z0-9_]+", clean_cap)
     if usernames:
@@ -246,7 +250,7 @@ def process_caption_custom(
             new_cap = new_cap.replace(u, clean_brand)
         return new_cap, True
 
-    # 2. Smart detection ("Extracted By : @X" etc.)
+    # 2. Smart detection ("Extracted By : @X" or "Extracted By : Name")
     pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
     if pattern.search(clean_cap):
         new_cap = pattern.sub(rf'\1 ➤ {clean_brand}', clean_cap)
@@ -300,7 +304,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        f"<b>🚀 {mode_title} LIVE DASHBOARD V10</b>\n"
+        f"<b>🚀 {mode_title} LIVE DASHBOARD V11</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source/Channel:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target Destination:</b> <code>{dest_chat}</code>\n"
@@ -379,7 +383,7 @@ async def start_web_server():
     server = uvicorn.Server(config)
     await server.serve()
 
-# ==================== COMMAND FILTERS ====================
+# ==================== COMMAND FILTERS DEFINITION ====================
 COMMAND_FILTER = (filters.me | filters.private)
 ALLOWED_FILTER = COMMAND_FILTER
 
@@ -393,7 +397,7 @@ async def start_command(client: Client, message: Message):
     m2_live = get_config("mode2_live_active", "off")
 
     welcome_text = (
-        "<b>🤖 Ultimate Dual-Mode Userbot V10 Active</b>\n"
+        "<b>🤖 Ultimate Dual-Mode Userbot V11 Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Mode 1 Target:</b> <code>{target1}</code> | Brand: <code>{brand1}</code>\n"
         f"🎯 <b>Mode 2 Target:</b> <code>{target2}</code> | Brand: <code>{brand2}</code>\n"
@@ -732,8 +736,8 @@ async def mode2_live_listener(client: Client, message: Message):
                             message_id=message.id,
                             text=final_caption
                         )
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"❌ [Mode 2 Live Listener Edit Failed]: {e}")
 
 # ==================== CORE DUAL-MODE WORKER ====================
 async def run_copy_process(
@@ -849,6 +853,7 @@ async def run_copy_process(
 
                 try:
                     if is_mode2:
+                        # ==================== MODE 2: IN-PLACE EDIT ====================
                         if msg.media:
                             videos_count += 1
                             if msg.caption != final_caption:
@@ -867,6 +872,7 @@ async def run_copy_process(
                                 )
                         copied_count += 1
                     else:
+                        # ==================== MODE 1: COPY & PASTE ====================
                         if msg.media:
                             videos_count += 1
                         else:
@@ -885,8 +891,9 @@ async def run_copy_process(
                                 text=final_caption,
                             )
                         copied_count += 1
-                except Exception:
-                    pass
+                except Exception as op_err:
+                    # Clear print so you see exactly what Telegram says
+                    print(f"❌ [{'Mode 2 (Edit)' if is_mode2 else 'Mode 1 (Copy)'} FAILED on msg {msg.id}]: {type(op_err).__name__} -> {op_err}")
 
                 await asyncio.sleep(DELAY_SECONDS)
 
@@ -925,7 +932,8 @@ async def run_copy_process(
 
         except FloodWait as e:
             await asyncio.sleep(e.value)
-        except Exception:
+        except Exception as loop_err:
+            print(f"❌ [Loop Fetch Error on ID {current_id}]: {loop_err}")
             current_id += 1
 
     task_running = False
@@ -963,7 +971,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Ultimate Dual-Mode V10 Userbot is Online & Ready on Railway!")
+    print("✅ Ultimate Dual-Mode V11 Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
