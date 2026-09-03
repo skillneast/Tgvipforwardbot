@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_edit_mode_userbot.db"
+DB_NAME = "ultimate_dual_mode_userbot.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -67,8 +67,21 @@ def init_db():
             status TEXT
         )
     """)
-    cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('brand_name', '𝐄𝐗𝐓𝐑𝐀𝐂𝐓𝐄𝐃 𝐁𝐘 ➤ @VOIDPABLO')")
-    cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('caption_prefix', '')")
+    # Default Configurations
+    defaults = {
+        'brand_name': '@skillneast1',
+        'caption_prefix': 'Extracted By',
+        'target_chat': '',
+        'mode2_target': '',
+        'mode2_brand': '@skillneast1',
+        'mode2_prefix': 'Extracted By',
+        'brand_enabled': 'on',
+        'brand_percentage': '40',
+        'mode2_brand_enabled': 'on',
+        'mode2_brand_percentage': '40'
+    }
+    for k, v in defaults.items():
+        cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", (k, v))
     conn.commit()
     conn.close()
 
@@ -135,9 +148,9 @@ def get_progress():
 
 init_db()
 
-# ==================== PYROGRAM USERBOT CLIENT ====================
+# ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "final_edit_mode_session",
+    "ultimate_dual_mode_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -149,7 +162,7 @@ task_cancelled = False
 task_start_time = 0.0
 active_dashboard_msg: Optional[Message] = None
 
-# ==================== UI & CAPTION LOGIC ====================
+# ==================== UI & SMART CAPTION LOGIC ====================
 def format_time(seconds: float) -> str:
     seconds = int(max(0, seconds))
     hours, remainder = divmod(seconds, 3600)
@@ -164,15 +177,26 @@ def generate_progress_bar(percentage: float, length: int = 12) -> str:
     empty = length - filled
     return "█" * filled + "░" * empty
 
-def process_caption(caption_text: str, is_pure_text: bool = False) -> Tuple[str, bool]:
-    brand = get_config("brand_name", "𝐄𝐗𝐓𝐑𝐀𝐂𝐓𝐄𝐃 𝐁𝐘 ➤ @VOIDPABLO")
-    prefix = get_config("caption_prefix", "")
+def process_caption_custom(
+    caption_text: str,
+    brand: str,
+    prefix: str,
+    enabled: str,
+    percentage_val: int,
+    is_pure_text: bool = False
+) -> Tuple[str, bool]:
+    """Processes captions dynamically based on given mode parameters."""
+    
+    # If branding toggle is OFF
+    if enabled.lower() == "off":
+        return caption_text if caption_text else "", False
 
     if not caption_text:
-        if random.random() < 0.40:
-            return f"{prefix} {brand}".strip(), True
+        if random.random() < (percentage_val / 100.0):
+            return f"{prefix} ➤ {brand}", True
         return "", False
 
+    # 1. Replace existing @usernames (100%)
     usernames = re.findall(r"@[a-zA-Z0-9_]+", caption_text)
     if usernames:
         new_cap = caption_text
@@ -180,23 +204,27 @@ def process_caption(caption_text: str, is_pure_text: bool = False) -> Tuple[str,
             new_cap = new_cap.replace(u, brand.split("➤")[-1].strip() if "➤" in brand else brand)
         return new_cap, True
 
+    # 2. Smart Detection for "Extracted By ➤ Name"
     pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
     if pattern.search(caption_text):
         new_cap = pattern.sub(rf'\1 ➤ {brand.split("➤")[-1].strip() if "➤" in brand else brand}', caption_text)
         return new_cap, True
 
+    # 3. Short titles protection
     if is_pure_text:
         clean_txt = caption_text.strip()
         if len(clean_txt) <= 30 or clean_txt.lower() in ["welcome", "complete", "notes", "index", "module"]:
             return caption_text, False
 
-    if random.random() < 0.40:
-        watermark_str = f"{prefix} {brand}".strip()
+    # 4. Custom Percentage Roll (e.g. 40%)
+    if random.random() < (percentage_val / 100.0):
+        watermark_str = f"{prefix} ➤ {brand}".strip()
         return f"{caption_text}\n\n{watermark_str}", True
 
     return caption_text, False
 
 def render_dashboard(
+    mode_title: str,
     source_chat: str,
     dest_chat: str,
     brand: str,
@@ -230,22 +258,22 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        "<b>🚀 EDIT-MODE DIRECT DASHBOARD</b>\n"
+        f"<b>🚀 {mode_title} LIVE DASHBOARD</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📍 <b>Source:</b> <code>{source_chat}</code>\n"
-        f"🎯 <b>Target:</b> <code>{dest_chat}</code>\n"
-        f"🎨 <b>Watermark:</b> <code>{brand}</code>\n"
+        f"📍 <b>Source/Channel:</b> <code>{source_chat}</code>\n"
+        f"🎯 <b>Target Destination:</b> <code>{dest_chat}</code>\n"
+        f"🎨 <b>Active Watermark:</b> <code>{prefix} ➤ {brand}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 <b>PROGRESS:</b> <code>[{bar}]</code> <b>{percentage}%</b>\n\n"
         f"🔢 <b>Current ID:</b> <code>{current_id}</code> / <code>{last_id}</code>\n"
         f"📦 <b>Total Range:</b> <code>{total_msgs}</code> msgs\n"
-        f"✅ <b>Copied:</b> <code>{copied_count}</code>\n"
+        f"✅ <b>Processed:</b> <code>{copied_count}</code>\n"
         f"⏳ <b>Remaining:</b> <code>{remaining_msgs}</code> msgs\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>📂 MEDIA BREAKDOWN:</b>\n"
-        f"• 🎥 <b>Videos/Media:</b> <code>{videos_count}</code>\n"
-        f"• 📝 <b>Texts/Files:</b> <code>{texts_count}</code>\n"
-        f"• 🏷️ <b>Branded:</b> <code>{branded_count}</code>\n"
+        "<b>📂 INSTANT STATS LOGGER:</b>\n"
+        f"• 🎥 <b>Videos Processed:</b> <code>{videos_count}</code>\n"
+        f"• 📝 <b>Texts/Files Processed:</b> <code>{texts_count}</code>\n"
+        f"• 🏷️ <b>Auto-Watermarked:</b> <code>{branded_count}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"⏱️ <b>Elapsed:</b> <code>{elapsed_str}</code> | ⌛ <b>ETA:</b> <code>{eta_str}</code>\n"
         f"⚡ <b>Speed:</b> <code>{speed_per_min} msgs/min</code>\n"
@@ -268,10 +296,13 @@ def render_dashboard(
 
 def parse_telegram_link(link: str) -> Tuple[Optional[int | str], Optional[int], Optional[int]]:
     link = link.strip()
-    p_range = re.search(r"t\.me/c/(\d+)/(\d+)-(\d+)", link)
-    if p_range:
-        return int("-100" + p_range.group(1)), int(p_range.group(2)), int(p_range.group(3))
+    
+    # Range format with dash: https://t.me/c/12345/100-5000
+    p_range_dash = re.search(r"t\.me/c/(\d+)/(\d+)-(\d+)", link)
+    if p_range_dash:
+        return int("-100" + p_range_dash.group(1)), int(p_range_dash.group(2)), int(p_range_dash.group(3))
 
+    # Single format: https://t.me/c/12345/100
     p_single = re.search(r"t\.me/c/(\d+)/(\d+)", link)
     if p_single:
         start = int(p_single.group(2))
@@ -314,35 +345,29 @@ ALLOWED_FILTER = (filters.me | filters.private)
 
 @app.on_message(ALLOWED_FILTER & filters.command(["start", "help"], prefixes=["/", "."]))
 async def start_command(client: Client, message: Message):
-    target = get_config("target_chat", "❌ Not Set")
-    brand = get_config("brand_name", "𝐄𝐗𝐓𝐑𝐀𝐂𝐓𝐄𝐃 𝐁𝐘 ➤ @VOIDPABLO")
+    target1 = get_config("target_chat", "❌ Not Set")
+    target2 = get_config("mode2_target", "❌ Not Set")
+    brand1 = get_config("brand_name", "@skillneast1")
+    brand2 = get_config("mode2_brand", "@skillneast1")
 
     welcome_text = (
-        "<b>🤖 Edit-Mode Userbot Active</b>\n"
+        "<b>🤖 Ultimate Dual-Mode Userbot Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎯 <b>Target:</b> <code>{target}</code>\n"
-        f"🎨 <b>Watermark:</b> <code>{brand}</code>\n\n"
+        f"🎯 <b>Mode 1 Target:</b> <code>{target1}</code> | Brand: <code>{brand1}</code>\n"
+        f"🎯 <b>Mode 2 Target:</b> <code>{target2}</code> | Brand: <code>{brand2}</code>\n\n"
         "<b>📖 Commands:</b>\n"
-        "• <code>/copy &lt;link&gt;</code> — Start copy task\n"
-        "• <code>/ld</code> — Live Dashboard\n"
-        "• <code>/cancel</code> — Stop task\n"
-        "• <code>/mode2</code> — Turn Auto-Edit Mode 2 ON/OFF\n"
-        "• <code>/settarget2 &lt;id&gt;</code> — Set Mode 2 target channel\n"
-        "• <code>/settarget &lt;id&gt;</code> — Set Mode 1 target channel\n"
-        "• <code>/setbrand &lt;name&gt;</code> — Set custom brand name\n"
-        "• <code>/sync</code> — Sync channel cache\n"
+        "• <code>/copy &lt;link&gt;</code> — Mode 1 (Copy & Paste to Target 1)\n"
+        "• <code>/mode2 &lt;link&gt; &lt;start&gt;-&lt;end&gt;</code> — Mode 2 (Edit in-place in Target 2)\n"
+        "• <code>/settarget &lt;id&gt;</code> / <code>/settarget2 &lt;id&gt;</code>\n"
+        "• <code>/setbrand &lt;name&gt;</code> / <code>/setbrand2 &lt;name&gt;</code>\n"
+        "• <code>/setprefix &lt;text&gt;</code> / <code>/setprefix2 &lt;text&gt;</code>\n"
+        "• <code>/togglebrand on/off</code> | <code>/setpercentage 40</code>\n"
+        "• <code>/ld</code> (Live Dashboard) | <code>/cancel</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("📊 Live Dashboard", callback_data="btn_status"),
-            InlineKeyboardButton("🎨 Brand", callback_data="btn_brand")
-        ],
-        [
-            InlineKeyboardButton("⏸️ Pause", callback_data="btn_pause"),
-            InlineKeyboardButton("▶️ Resume", callback_data="btn_resume")
-        ],
-        [
             InlineKeyboardButton("🛑 Cancel Task", callback_data="btn_stop")
         ]
     ])
@@ -364,20 +389,25 @@ async def ld_command(client: Client, message: Message):
 async def send_status_view(target_ctx: Message | CallbackQuery):
     global active_dashboard_msg
     saved = get_progress()
-    target_config = get_config("target_chat", "❌ Not Set")
-    brand = get_config("brand_name", "𝐄𝐗𝐓𝐑𝐀𝐂𝐓𝐄𝐃 𝐁𝐘 ➤ @VOIDPABLO")
-
+    
     if task_running or (saved and saved[10] in ["RUNNING", "PAUSED"]):
         (
             source_chat, dest_chat, start_id, current_id, last_id,
             copied_count, videos_count, texts_count, branded_count, status
         ) = saved
         status_label = "PAUSED ⏸️" if is_paused else "RUNNING 🟢"
+        
+        # Check if mode2 or mode1 based on source_chat == dest_chat
+        mode_title = "MODE 2 (RANGE EDITOR)" if str(source_chat) == str(dest_chat) else "MODE 1 (COPY COPIER)"
+        brand_used = get_config("mode2_brand") if mode_title.startswith("MODE 2") else get_config("brand_name")
+        prefix_used = get_config("mode2_prefix") if mode_title.startswith("MODE 2") else get_config("caption_prefix")
+
         card_text, keyboard = render_dashboard(
+            mode_title=mode_title,
             source_chat=source_chat,
             dest_chat=dest_chat,
-            brand=brand,
-            prefix="",
+            brand=brand_used,
+            prefix=prefix_used,
             start_id=start_id,
             current_id=current_id,
             last_id=last_id,
@@ -403,68 +433,71 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
             pass
         await target_ctx.answer("Refreshed")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["pause"], prefixes=["/", "."]))
-async def pause_task(client: Client, message: Message):
-    global is_paused
-    if task_running:
-        is_paused = True
-        await message.reply_text("⏸️ <b>Task Paused.</b>")
-
-@app.on_message(ALLOWED_FILTER & filters.command(["resume"], prefixes=["/", "."]))
-async def resume_task(client: Client, message: Message):
-    global is_paused, task_running, task_start_time, task_cancelled
-    if not task_running:
-        saved = get_progress()
-        if saved and saved[10] == "PAUSED":
-            (
-                source_chat, dest_chat, start_id, current_id, last_id,
-                copied_count, videos_count, texts_count, branded_count, _
-            ) = saved
-            is_paused = False
-            task_cancelled = False
-            task_start_time = time.time()
-            asyncio.create_task(
-                run_copy_process(
-                    client, message, source_chat, dest_chat, start_id, current_id, last_id,
-                    copied_count, videos_count, texts_count, branded_count
-                )
-            )
-            await message.reply_text(f"▶️ <b>Resuming from ID:</b> <code>{current_id}</code>")
-
 @app.on_message(ALLOWED_FILTER & filters.command(["settarget"], prefixes=["/", "."]))
 async def set_target_cmd(client: Client, message: Message):
     args = message.text.split()
-    if len(args) < 2:
-        return
+    if len(args) < 2: return
     set_config("target_chat", args[1].strip())
-    await message.reply_text(f"✅ Target set to: <code>{args[1].strip()}</code>")
+    await message.reply_text(f"✅ Mode 1 Target set to: <code>{args[1].strip()}</code>")
 
 @app.on_message(ALLOWED_FILTER & filters.command(["settarget2"], prefixes=["/", "."]))
 async def set_target2_cmd(client: Client, message: Message):
     args = message.text.split()
-    if len(args) < 2:
-        return
-    set_config("target_chat_m2", args[1].strip())
+    if len(args) < 2: return
+    set_config("mode2_target", args[1].strip())
     await message.reply_text(f"✅ Mode 2 Target set to: <code>{args[1].strip()}</code>")
 
 @app.on_message(ALLOWED_FILTER & filters.command(["setbrand"], prefixes=["/", "."]))
 async def set_brand_cmd(client: Client, message: Message):
     args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        return
+    if len(args) < 2: return
     set_config("brand_name", args[1].strip())
-    await message.reply_text(f"✅ Brand set to: <code>{args[1].strip()}</code>")
+    await message.reply_text(f"✅ Mode 1 Brand set to: <code>{args[1].strip()}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["mode2"], prefixes=["/", "."]))
-async def toggle_mode2_cmd(client: Client, message: Message):
-    current = get_config("mode2_active", "OFF")
-    new_val = "OFF" if current == "ON" else "ON"
-    set_config("mode2_active", new_val)
-    await message.reply_text(f"<b>🔄 Mode 2 (Auto-Edit):</b> <code>{new_val}</code>")
+@app.on_message(ALLOWED_FILTER & filters.command(["setbrand2"], prefixes=["/", "."]))
+async def set_brand2_cmd(client: Client, message: Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2: return
+    set_config("mode2_brand", args[1].strip())
+    await message.reply_text(f"✅ Mode 2 Brand set to: <code>{args[1].strip()}</code>")
+
+@app.on_message(ALLOWED_FILTER & filters.command(["setprefix"], prefixes=["/", "."]))
+async def set_prefix_cmd(client: Client, message: Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2: return
+    set_config("caption_prefix", args[1].strip())
+    await message.reply_text(f"✅ Mode 1 Prefix set to: <code>{args[1].strip()}</code>")
+
+@app.on_message(ALLOWED_FILTER & filters.command(["setprefix2"], prefixes=["/", "."]))
+async def set_prefix2_cmd(client: Client, message: Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2: return
+    set_config("mode2_prefix", args[1].strip())
+    await message.reply_text(f"✅ Mode 2 Prefix set to: <code>{args[1].strip()}</code>")
+
+@app.on_message(ALLOWED_FILTER & filters.command(["togglebrand"], prefixes=["/", "."]))
+async def toggle_brand_cmd(client: Client, message: Message):
+    args = message.text.split()
+    if len(args) < 2: return
+    val = args[1].strip().lower()
+    if val in ["on", "off"]:
+        set_config("brand_enabled", val)
+        await message.reply_text(f"✅ Watermark toggled: <code>{val.upper()}</code>")
+
+@app.on_message(ALLOWED_FILTER & filters.command(["setpercentage"], prefixes=["/", "."]))
+async def set_percentage_cmd(client: Client, message: Message):
+    args = message.text.split()
+    if len(args) < 2: return
+    try:
+        pct = int(args[1].strip())
+        set_config("brand_percentage", str(pct))
+        await message.reply_text(f"✅ Random Watermark percentage set to: <code>{pct}%</code>")
+    except ValueError:
+        pass
 
 @app.on_callback_query()
 async def handle_callbacks(client: Client, callback: CallbackQuery):
-    global is_paused, task_running, task_cancelled, task_start_time
+    global is_paused, task_running, task_cancelled
     data = callback.data
     if data == "btn_status":
         await send_status_view(callback)
@@ -483,34 +516,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         await callback.answer("Cancelled 🛑")
         await send_status_view(callback)
 
-# ==================== MODE 2: AUTO-EDIT INCOMING MESSAGES ====================
-@app.on_message(~filters.service)
-async def mode2_auto_edit_listener(client: Client, message: Message):
-    if get_config("mode2_active", "OFF") != "ON":
-        return
-
-    target_m2 = get_config("target_chat_m2")
-    if not target_m2:
-        return
-
-    # Match chat ID
-    if str(message.chat.id) not in [str(target_m2), f"-100{str(target_m2).replace('-100', '')}", str(target_m2).replace("-100", "")]:
-        return
-
-    try:
-        raw_caption = message.caption or message.text or ""
-        is_pure_text = bool(message.text and not message.media)
-        final_caption, was_branded = process_caption(raw_caption, is_pure_text=is_pure_text)
-
-        # Direct edit caption without deleting message
-        if message.caption:
-            await message.edit_caption(caption=final_caption)
-        elif message.text and not message.media:
-            await message.edit_text(text=final_caption)
-    except Exception as e:
-        print(f"Mode 2 Edit Error: {e}")
-
-# ==================== MAIN COPY COMMAND (MODE 1) ====================
+# ==================== MODE 1: COPY COMMAND ====================
 @app.on_message(ALLOWED_FILTER & filters.command(["copy"], prefixes=["/", "."]))
 async def start_copy_command(client: Client, message: Message):
     global task_running, is_paused, task_cancelled, task_start_time
@@ -542,11 +548,67 @@ async def start_copy_command(client: Client, message: Message):
     asyncio.create_task(
         run_copy_process(
             client, message, source_chat, dest_chat, start_msg_id, start_msg_id, end_msg_id,
-            0, 0, 0, 0
+            0, 0, 0, 0, is_mode2=False
         )
     )
 
-# ==================== CORE WORKER (MODE 1) ====================
+# ==================== MODE 2: RANGE IN-PLACE EDITOR COMMAND ====================
+@app.on_message(ALLOWED_FILTER & filters.command(["mode2"], prefixes=["/", "."]))
+async def start_mode2_command(client: Client, message: Message):
+    global task_running, is_paused, task_cancelled, task_start_time
+
+    if task_running:
+        await message.reply_text("⚠️ Task already running!")
+        return
+
+    dest_chat = get_config("mode2_target")
+    if not dest_chat:
+        await message.reply_text("❌ Mode 2 Target channel not set! Use `/settarget2 <channel_id>`")
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        await message.reply_text(
+            "❌ <b>Usage:</b> <code>/mode2 &lt;channel_link&gt; &lt;start_id&gt;-&lt;end_id&gt;</code>\n"
+            "Example: <code>/mode2 https://t.me/c/12345/1 1-5000</code>"
+        )
+        return
+
+    # Extract channel link and optional explicit range args if provided
+    link = args[1]
+    chat_id, parsed_start, parsed_end = parse_telegram_link(link)
+    
+    start_msg_id = parsed_start
+    end_msg_id = parsed_end
+
+    # Check if range is explicitly passed as 3rd arg like "1-5000"
+    if len(args) >= 3 and "-" in args[2]:
+        try:
+            s_part, e_part = args[2].split("-")
+            start_msg_id = int(s_part)
+            end_msg_id = int(e_part)
+        except ValueError:
+            pass
+
+    if not chat_id or not start_msg_id or not end_msg_id:
+        await message.reply_text("❌ Invalid link or range format!")
+        return
+
+    is_paused = False
+    task_cancelled = False
+    task_start_time = time.time()
+    
+    # In Mode 2, source and dest are the same channel (in-place edit)
+    save_progress(str(dest_chat), str(dest_chat), start_msg_id, start_msg_id, end_msg_id, 0, 0, 0, 0, "RUNNING")
+
+    asyncio.create_task(
+        run_copy_process(
+            client, message, dest_chat, dest_chat, start_msg_id, start_msg_id, end_msg_id,
+            0, 0, 0, 0, is_mode2=True
+        )
+    )
+
+# ==================== CORE DUAL-MODE WORKER ====================
 async def run_copy_process(
     client: Client,
     notify_message: Message,
@@ -559,6 +621,7 @@ async def run_copy_process(
     initial_videos_count: int,
     initial_texts_count: int,
     initial_branded_count: int,
+    is_mode2: bool = False,
 ):
     global task_running, is_paused, task_cancelled, task_start_time, active_dashboard_msg
     task_running = True
@@ -566,14 +629,30 @@ async def run_copy_process(
     task_cancelled = False
 
     try:
-        source_chat_obj = await client.get_chat(source_chat)
         dest_chat_obj = await client.get_chat(dest_chat)
+        if not is_mode2:
+            source_chat_obj = await client.get_chat(source_chat)
+        else:
+            source_chat_obj = dest_chat_obj
     except Exception as e:
         await notify_message.reply_text(f"❌ Chat Access Error: `{e}`")
         task_running = False
         return
 
-    brand = get_config("brand_name", "𝐄𝐗𝐓𝐑𝐀𝐂𝐓𝐄𝐃 𝐁𝐘 ➤ @VOIDPABLO")
+    # Select configuration based on mode
+    if is_mode2:
+        brand = get_config("mode2_brand", "@skillneast1")
+        prefix = get_config("mode2_prefix", "Extracted By")
+        enabled = get_config("mode2_brand_enabled", "on")
+        pct = int(get_config("mode2_brand_percentage", "40"))
+        mode_title = "MODE 2 (IN-PLACE EDITOR)"
+    else:
+        brand = get_config("brand_name", "@skillneast1")
+        prefix = get_config("caption_prefix", "Extracted By")
+        enabled = get_config("brand_enabled", "on")
+        pct = int(get_config("brand_percentage", "40"))
+        mode_title = "MODE 1 (COPY COPIER)"
+
     current_id = current_start
     copied_count = initial_copied_count
     videos_count = initial_videos_count
@@ -581,10 +660,11 @@ async def run_copy_process(
     branded_count = initial_branded_count
 
     initial_card, initial_keyboard = render_dashboard(
+        mode_title=mode_title,
         source_chat=str(source_chat),
         dest_chat=str(dest_chat),
         brand=brand,
-        prefix="",
+        prefix=prefix,
         start_id=start_id,
         current_id=current_id,
         last_id=last_id,
@@ -626,45 +706,61 @@ async def run_copy_process(
             if msg and not msg.empty and not msg.service:
                 raw_caption = msg.caption or msg.text or ""
                 is_pure_text = bool(msg.text and not msg.media)
-                final_caption, was_branded = process_caption(raw_caption, is_pure_text=is_pure_text)
+                
+                final_caption, was_branded = process_caption_custom(
+                    raw_caption,
+                    brand=brand,
+                    prefix=prefix,
+                    enabled=enabled,
+                    percentage_val=pct,
+                    is_pure_text=is_pure_text
+                )
 
                 if was_branded:
                     branded_count += 1
 
                 try:
-                    if msg.media:
-                        videos_count += 1
-                        await client.copy_message(
-                            chat_id=dest_chat_obj.id,
-                            from_chat_id=source_chat_obj.id,
-                            message_id=msg.id,
-                            caption=final_caption,
-                        )
-                    elif msg.text:
-                        texts_count += 1
-                        await client.send_message(
-                            chat_id=dest_chat_obj.id,
-                            text=final_caption,
-                        )
-                    copied_count += 1
+                    if is_mode2:
+                        # ==================== MODE 2: IN-PLACE EDIT ====================
+                        if msg.media:
+                            videos_count += 1
+                            await client.edit_message_caption(
+                                chat_id=dest_chat_obj.id,
+                                message_id=msg.id,
+                                caption=final_caption
+                            )
+                        elif msg.text:
+                            texts_count += 1
+                            # Only edit if text differs
+                            if msg.text != final_caption:
+                                await client.edit_message_text(
+                                    chat_id=dest_chat_obj.id,
+                                    message_id=msg.id,
+                                    text=final_caption
+                                />
+                        copied_count += 1
+                    else:
+                        # ==================== MODE 1: COPY & PASTE ====================
+                        if msg.media:
+                            videos_count += 1
+                        else:
+                            texts_count += 1
+
+                        if msg.media:
+                            await client.copy_message(
+                                chat_id=dest_chat_obj.id,
+                                from_chat_id=source_chat_obj.id,
+                                message_id=msg.id,
+                                caption=final_caption,
+                            )
+                        elif msg.text:
+                            await client.send_message(
+                                chat_id=dest_chat_obj.id,
+                                text=final_caption,
+                            )
+                        copied_count += 1
                 except Exception:
-                    if msg.media:
-                        try:
-                            file_path = await client.download_media(msg)
-                            if file_path:
-                                if msg.video:
-                                    await client.send_video(dest_chat_obj.id, video=file_path, caption=final_caption)
-                                elif msg.photo:
-                                    await client.send_photo(dest_chat_obj.id, photo=file_path, caption=final_caption)
-                                elif msg.document:
-                                    await client.send_document(dest_chat_obj.id, document=file_path, caption=final_caption)
-                                elif msg.audio:
-                                    await client.send_audio(dest_chat_obj.id, audio=file_path, caption=final_caption)
-                                copied_count += 1
-                                if os.path.exists(file_path):
-                                    os.remove(file_path)
-                        except Exception:
-                            pass
+                    pass
 
                 await asyncio.sleep(DELAY_SECONDS)
 
@@ -678,10 +774,11 @@ async def run_copy_process(
             if (now - last_dashboard_edit_time >= 5.0) or (current_id > last_id):
                 last_dashboard_edit_time = now
                 updated_card, updated_keyboard = render_dashboard(
+                    mode_title=mode_title,
                     source_chat=str(source_chat),
                     dest_chat=str(dest_chat),
                     brand=brand,
-                    prefix="",
+                    prefix=prefix,
                     start_id=start_id,
                     current_id=min(current_id, last_id),
                     last_id=last_id,
@@ -709,10 +806,11 @@ async def run_copy_process(
     delete_task_progress()
 
     completed_card, completed_keyboard = render_dashboard(
+        mode_title=mode_title,
         source_chat=str(source_chat),
         dest_chat=str(dest_chat),
         brand=brand,
-        prefix="",
+        prefix=prefix,
         start_id=start_id,
         current_id=last_id,
         last_id=last_id,
@@ -736,7 +834,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Edit-Mode Userbot is Online & Ready on Railway!")
+    print("✅ Ultimate Dual-Mode Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
