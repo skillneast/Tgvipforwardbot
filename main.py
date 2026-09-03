@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "final_fixed_media_userbot.db"
+DB_NAME = "final_fixed_type_userbot.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -137,7 +137,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "final_fixed_media_session",
+    "final_fixed_type_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -200,6 +200,7 @@ def render_dashboard(
     source_chat: str,
     dest_chat: str,
     brand: str,
+    prefix: str,
     start_id: int,
     current_id: int,
     last_id: int,
@@ -576,7 +577,6 @@ async def run_copy_process(
                 return
 
         try:
-            # 1-by-1 safe sequential fetch ensuring NO media gets silently skipped
             msg: Message = await client.get_messages(source_chat_obj.id, current_id)
             
             if msg and not msg.empty and not msg.service:
@@ -603,8 +603,7 @@ async def run_copy_process(
                             text=final_caption,
                         )
                     copied_count += 1
-                except Exception as media_err:
-                    # If direct copy fails, fallback to download & re-upload to ensure media is NEVER skipped
+                except Exception:
                     if msg.media:
                         try:
                             file_path = await client.download_media(msg)
