@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "ultimate_dual_mode_v7.db"
+DB_NAME = "ultimate_dual_mode_v8.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -148,9 +148,9 @@ def get_progress():
 
 init_db()
 
-# ==================== PYROGRAM USERBOT CLIENT ====================
+# ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "ultimate_dual_mode_v7_session",
+    "ultimate_dual_mode_v8_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -193,10 +193,9 @@ def process_caption_custom(
             return f"{prefix} ➤ {brand}", True
         return "", False
 
-    # Deep clean quotes, markdown block symbols
     clean_cap = caption_text.replace(">", "").strip()
 
-    # 1. 100% Aggressive @username replacement (handles @MRANUJ7, @xyz, etc.)
+    # 1. 100% Replace existing @usernames (Even inside Quotes)
     usernames = re.findall(r"@[a-zA-Z0-9_]+", clean_cap)
     if usernames:
         new_cap = clean_cap
@@ -204,7 +203,7 @@ def process_caption_custom(
             new_cap = new_cap.replace(u, brand.split("➤")[-1].strip() if "➤" in brand else brand)
         return new_cap, True
 
-    # 2. Smart Detection for "Extracted By : @MRANUJ7" or "Extracted By ➤ Name" or quoted labels
+    # 2. Smart Detection for "Extracted By : @MRANUJ7" or "Extracted By ➤ Name"
     pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
     if pattern.search(clean_cap):
         new_cap = pattern.sub(rf'\1 ➤ {brand.split("➤")[-1].strip() if "➤" in brand else brand}', clean_cap)
@@ -258,7 +257,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        f"<b>🚀 {mode_title} LIVE DASHBOARD V7</b>\n"
+        f"<b>🚀 {mode_title} LIVE DASHBOARD V8</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source/Channel:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target Destination:</b> <code>{dest_chat}</code>\n"
@@ -337,10 +336,12 @@ async def start_web_server():
     server = uvicorn.Server(config)
     await server.serve()
 
-# ==================== COMMAND HANDLERS (FIXED LISTENER) ====================
-# Accepts commands from Saved Messages (filters.me) AND direct private chats (filters.private)
+# ==================== COMMAND FILTERS DEFINITION ====================
+# Defining both aliases so NameError is 100% prevented
 COMMAND_FILTER = (filters.me | filters.private)
+ALLOWED_FILTER = COMMAND_FILTER
 
+# ==================== COMMAND HANDLERS ====================
 @app.on_message(COMMAND_FILTER & filters.command(["start", "help"], prefixes=["/", "."]))
 async def start_command(client: Client, message: Message):
     target1 = get_config("target_chat", "❌ Not Set")
@@ -350,7 +351,7 @@ async def start_command(client: Client, message: Message):
     m2_live = get_config("mode2_live_active", "off")
 
     welcome_text = (
-        "<b>🤖 Ultimate Dual-Mode Userbot V7 Active</b>\n"
+        "<b>🤖 Ultimate Dual-Mode Userbot V8 Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Mode 1 Target:</b> <code>{target1}</code> | Brand: <code>{brand1}</code>\n"
         f"🎯 <b>Mode 2 Target:</b> <code>{target2}</code> | Brand: <code>{brand2}</code>\n"
@@ -358,6 +359,7 @@ async def start_command(client: Client, message: Message):
         "<b>📖 Commands (Send in Saved Messages / DM):</b>\n"
         "• <code>/copy &lt;link&gt;</code> — Mode 1 (Copy & Paste to Target 1)\n"
         "• <code>/mode2 &lt;link&gt; &lt;start&gt;-&lt;end&gt;</code> — Mode 2 (Edit in-place)\n"
+        "• <code>/mode2live on</code> or <code>off</code> — Auto-watermark incoming files\n"
         "• <code>/settarget &lt;id&gt;</code> | <code>/settarget2 &lt;id&gt;</code>\n"
         "• <code>/setbrand &lt;name&gt;</code> | <code>/setbrand2 &lt;name&gt;</code>\n"
         "• <code>/setprefix &lt;text&gt;</code> | <code>/setpercentage 40</code>\n"
@@ -481,21 +483,28 @@ async def set_brand_cmd(client: Client, message: Message):
     set_config("brand_name", args[1].strip())
     await message.reply_text(f"✅ Mode 1 Brand set to: <code>{args[1].strip()}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["setbrand2"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["setbrand2"], prefixes=["/", "."]))
 async def set_brand2_cmd(client: Client, message: Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2: return
     set_config("mode2_brand", args[1].strip())
     await message.reply_text(f"✅ Mode 2 Brand set to: <code>{args[1].strip()}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["setprefix"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["setprefix"], prefixes=["/", "."]))
 async def set_prefix_cmd(client: Client, message: Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2: return
     set_config("caption_prefix", args[1].strip())
-    await message.reply_text(f"✅ Prefix set to: <code>{args[1].strip()}</code>")
+    await message.reply_text(f"✅ Mode 1 Prefix set to: <code>{args[1].strip()}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["mode2live"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["setprefix2"], prefixes=["/", "."]))
+async def set_prefix2_cmd(client: Client, message: Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2: return
+    set_config("mode2_prefix", args[1].strip())
+    await message.reply_text(f"✅ Mode 2 Prefix set to: <code>{args[1].strip()}</code>")
+
+@app.on_message(COMMAND_FILTER & filters.command(["mode2live"], prefixes=["/", "."]))
 async def mode2_live_cmd(client: Client, message: Message):
     args = message.text.split()
     if len(args) < 2: return
@@ -504,7 +513,7 @@ async def mode2_live_cmd(client: Client, message: Message):
         set_config("mode2_live_active", val)
         await message.reply_text(f"✅ Mode 2 Live Auto-Watermark is now: <code>{val.upper()}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["setpercentage"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["setpercentage"], prefixes=["/", "."]))
 async def set_percentage_cmd(client: Client, message: Message):
     args = message.text.split()
     if len(args) < 2: return
@@ -787,7 +796,7 @@ async def run_copy_process(
 
             now = time.time()
             if (now - last_dashboard_edit_time >= 5.0) or (current_id > last_id):
-                last_dashboard_edit_time = now
+                last_dashboard_edit_time = time.time()
                 updated_card, updated_keyboard = render_dashboard(
                     mode_title=mode_title,
                     source_chat=str(source_chat),
@@ -838,18 +847,21 @@ async def run_copy_process(
     )
     try:
         if active_dashboard_msg:
-            active_dashboard_msg.edit_text(completed_card, reply_markup=completed_keyboard, disable_web_page_preview=True)
+            await active_dashboard_msg.edit_text(completed_card, reply_markup=completed_keyboard, disable_web_page_preview=True)
         else:
-            notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
+            await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
     except Exception:
-        notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
+        try:
+            await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
+        except Exception:
+            pass
 
 # ==================== RUNNER ====================
 async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Ultimate Dual-Mode V7 Userbot is Online & Ready on Railway!")
+    print("✅ Ultimate Dual-Mode V8 Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
