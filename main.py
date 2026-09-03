@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "ultimate_dual_mode_v6.db"
+DB_NAME = "ultimate_dual_mode_v7.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -148,9 +148,9 @@ def get_progress():
 
 init_db()
 
-# ==================== PYROGRAM CLIENT ====================
+# ==================== PYROGRAM USERBOT CLIENT ====================
 app = Client(
-    "ultimate_dual_mode_v6_session",
+    "ultimate_dual_mode_v7_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -162,7 +162,7 @@ task_cancelled = False
 task_start_time = 0.0
 active_dashboard_msg: Optional[Message] = None
 
-# ==================== UI & SMART QUOTED-CAPTION LOGIC ====================
+# ==================== UI & BULLETPROOF CAPTION PARSER ====================
 def format_time(seconds: float) -> str:
     seconds = int(max(0, seconds))
     hours, remainder = divmod(seconds, 3600)
@@ -193,8 +193,10 @@ def process_caption_custom(
             return f"{prefix} ➤ {brand}", True
         return "", False
 
+    # Deep clean quotes, markdown block symbols
     clean_cap = caption_text.replace(">", "").strip()
 
+    # 1. 100% Aggressive @username replacement (handles @MRANUJ7, @xyz, etc.)
     usernames = re.findall(r"@[a-zA-Z0-9_]+", clean_cap)
     if usernames:
         new_cap = clean_cap
@@ -202,16 +204,19 @@ def process_caption_custom(
             new_cap = new_cap.replace(u, brand.split("➤")[-1].strip() if "➤" in brand else brand)
         return new_cap, True
 
+    # 2. Smart Detection for "Extracted By : @MRANUJ7" or "Extracted By ➤ Name" or quoted labels
     pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
     if pattern.search(clean_cap):
         new_cap = pattern.sub(rf'\1 ➤ {brand.split("➤")[-1].strip() if "➤" in brand else brand}', clean_cap)
         return new_cap, True
 
+    # 3. Short titles protection
     if is_pure_text:
         txt_chk = clean_cap.strip()
         if len(txt_chk) <= 30 or txt_chk.lower() in ["welcome", "complete", "notes", "index", "module"]:
             return clean_cap, False
 
+    # 4. Custom Percentage Roll (e.g. 40%)
     if random.random() < (percentage_val / 100.0):
         watermark_str = f"{prefix} ➤ {brand}".strip()
         return f"{clean_cap}\n\n{watermark_str}", True
@@ -253,7 +258,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        f"<b>🚀 {mode_title} LIVE DASHBOARD V6</b>\n"
+        f"<b>🚀 {mode_title} LIVE DASHBOARD V7</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source/Channel:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target Destination:</b> <code>{dest_chat}</code>\n"
@@ -332,10 +337,11 @@ async def start_web_server():
     server = uvicorn.Server(config)
     await server.serve()
 
-# ==================== COMMAND HANDLERS ====================
-ALLOWED_FILTER = (filters.me | filters.private)
+# ==================== COMMAND HANDLERS (FIXED LISTENER) ====================
+# Accepts commands from Saved Messages (filters.me) AND direct private chats (filters.private)
+COMMAND_FILTER = (filters.me | filters.private)
 
-@app.on_message(ALLOWED_FILTER & filters.command(["start", "help"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["start", "help"], prefixes=["/", "."]))
 async def start_command(client: Client, message: Message):
     target1 = get_config("target_chat", "❌ Not Set")
     target2 = get_config("mode2_target", "❌ Not Set")
@@ -344,17 +350,17 @@ async def start_command(client: Client, message: Message):
     m2_live = get_config("mode2_live_active", "off")
 
     welcome_text = (
-        "<b>🤖 Ultimate Dual-Mode Userbot V6 Active</b>\n"
+        "<b>🤖 Ultimate Dual-Mode Userbot V7 Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Mode 1 Target:</b> <code>{target1}</code> | Brand: <code>{brand1}</code>\n"
         f"🎯 <b>Mode 2 Target:</b> <code>{target2}</code> | Brand: <code>{brand2}</code>\n"
         f"⚡ <b>Mode 2 Live Auto-Watermark:</b> <code>{m2_live.upper()}</code>\n\n"
-        "<b>📖 Commands:</b>\n"
+        "<b>📖 Commands (Send in Saved Messages / DM):</b>\n"
         "• <code>/copy &lt;link&gt;</code> — Mode 1 (Copy & Paste to Target 1)\n"
-        "• <code>/mode2 &lt;link&gt; &lt;start&gt;-&lt;end&gt;</code> — Mode 2 (Edit in-place in Target 2)\n"
-        "• <code>/mode2live on</code> or <code>off</code> — Auto-watermark incoming files\n"
-        "• <code>/settarget2 &lt;id&gt;</code> | <code>/setbrand2 &lt;name&gt;</code>\n"
-        "• <code>/setpercentage 40</code> (or 100 for all files)\n"
+        "• <code>/mode2 &lt;link&gt; &lt;start&gt;-&lt;end&gt;</code> — Mode 2 (Edit in-place)\n"
+        "• <code>/settarget &lt;id&gt;</code> | <code>/settarget2 &lt;id&gt;</code>\n"
+        "• <code>/setbrand &lt;name&gt;</code> | <code>/setbrand2 &lt;name&gt;</code>\n"
+        "• <code>/setprefix &lt;text&gt;</code> | <code>/setpercentage 40</code>\n"
         "• <code>/ld</code> (Live Dashboard) | <code>/cancel</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
@@ -366,7 +372,7 @@ async def start_command(client: Client, message: Message):
     ])
     await message.reply_text(welcome_text, reply_markup=keyboard, disable_web_page_preview=True)
 
-@app.on_message(ALLOWED_FILTER & filters.command(["cancel", "stop"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["cancel", "stop"], prefixes=["/", "."]))
 async def cancel_command(client: Client, message: Message):
     global task_running, is_paused, task_cancelled
     task_cancelled = True
@@ -375,7 +381,7 @@ async def cancel_command(client: Client, message: Message):
     delete_task_progress()
     await message.reply_text("<b>🛑 Task Cancelled & Cleared Successfully!</b>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["ld", "status"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["ld", "status"], prefixes=["/", "."]))
 async def ld_command(client: Client, message: Message):
     await send_status_view(message)
 
@@ -425,14 +431,14 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
             pass
         await target_ctx.answer("Refreshed")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["pause"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["pause"], prefixes=["/", "."]))
 async def pause_task(client: Client, message: Message):
     global is_paused
     if task_running:
         is_paused = True
         await message.reply_text("⏸️ <b>Task Paused.</b>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["resume"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["resume"], prefixes=["/", "."]))
 async def resume_task(client: Client, message: Message):
     global is_paused, task_running, task_start_time, task_cancelled
     if not task_running:
@@ -454,21 +460,21 @@ async def resume_task(client: Client, message: Message):
             )
             await message.reply_text(f"▶️ <b>Resuming from ID:</b> <code>{current_id}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["settarget"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["settarget"], prefixes=["/", "."]))
 async def set_target_cmd(client: Client, message: Message):
     args = message.text.split()
     if len(args) < 2: return
     set_config("target_chat", args[1].strip())
     await message.reply_text(f"✅ Mode 1 Target set to: <code>{args[1].strip()}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["settarget2"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["settarget2"], prefixes=["/", "."]))
 async def set_target2_cmd(client: Client, message: Message):
     args = message.text.split()
     if len(args) < 2: return
     set_config("mode2_target", args[1].strip())
     await message.reply_text(f"✅ Mode 2 Target set to: <code>{args[1].strip()}</code>")
 
-@app.on_message(ALLOWED_FILTER & filters.command(["setbrand"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["setbrand"], prefixes=["/", "."]))
 async def set_brand_cmd(client: Client, message: Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2: return
@@ -481,6 +487,13 @@ async def set_brand2_cmd(client: Client, message: Message):
     if len(args) < 2: return
     set_config("mode2_brand", args[1].strip())
     await message.reply_text(f"✅ Mode 2 Brand set to: <code>{args[1].strip()}</code>")
+
+@app.on_message(ALLOWED_FILTER & filters.command(["setprefix"], prefixes=["/", "."]))
+async def set_prefix_cmd(client: Client, message: Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2: return
+    set_config("caption_prefix", args[1].strip())
+    await message.reply_text(f"✅ Prefix set to: <code>{args[1].strip()}</code>")
 
 @app.on_message(ALLOWED_FILTER & filters.command(["mode2live"], prefixes=["/", "."]))
 async def mode2_live_cmd(client: Client, message: Message):
@@ -525,7 +538,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         await send_status_view(callback)
 
 # ==================== MODE 1: COPY COMMAND ====================
-@app.on_message(ALLOWED_FILTER & filters.command(["copy"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["copy"], prefixes=["/", "."]))
 async def start_copy_command(client: Client, message: Message):
     global task_running, is_paused, task_cancelled, task_start_time
 
@@ -561,7 +574,7 @@ async def start_copy_command(client: Client, message: Message):
     )
 
 # ==================== MODE 2: RANGE IN-PLACE EDITOR COMMAND ====================
-@app.on_message(ALLOWED_FILTER & filters.command(["mode2"], prefixes=["/", "."]))
+@app.on_message(COMMAND_FILTER & filters.command(["mode2"], prefixes=["/", "."]))
 async def start_mode2_command(client: Client, message: Message):
     global task_running, is_paused, task_cancelled, task_start_time
 
@@ -825,18 +838,18 @@ async def run_copy_process(
     )
     try:
         if active_dashboard_msg:
-            await active_dashboard_msg.edit_text(completed_card, reply_markup=completed_keyboard, disable_web_page_preview=True)
+            active_dashboard_msg.edit_text(completed_card, reply_markup=completed_keyboard, disable_web_page_preview=True)
         else:
-            await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
+            notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
     except Exception:
-        await notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
+        notify_message.reply_text(completed_card, reply_markup=completed_keyboard)
 
 # ==================== RUNNER ====================
 async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Ultimate Dual-Mode V6 Userbot is Online & Ready on Railway!")
+    print("✅ Ultimate Dual-Mode V7 Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
