@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "ultimate_dual_mode_userbot.db"
+DB_NAME = "ultimate_dual_mode_v2.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -150,7 +150,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "ultimate_dual_mode_session",
+    "ultimate_dual_mode_v2_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -185,9 +185,6 @@ def process_caption_custom(
     percentage_val: int,
     is_pure_text: bool = False
 ) -> Tuple[str, bool]:
-    """Processes captions dynamically based on given mode parameters."""
-    
-    # If branding toggle is OFF
     if enabled.lower() == "off":
         return caption_text if caption_text else "", False
 
@@ -196,7 +193,6 @@ def process_caption_custom(
             return f"{prefix} ➤ {brand}", True
         return "", False
 
-    # 1. Replace existing @usernames (100%)
     usernames = re.findall(r"@[a-zA-Z0-9_]+", caption_text)
     if usernames:
         new_cap = caption_text
@@ -204,19 +200,16 @@ def process_caption_custom(
             new_cap = new_cap.replace(u, brand.split("➤")[-1].strip() if "➤" in brand else brand)
         return new_cap, True
 
-    # 2. Smart Detection for "Extracted By ➤ Name"
     pattern = re.compile(r'(extracted\s*by|downloaded\s*by|uploaded\s*by|creds\s*by|by)\s*[:➤—–-]\s*([^\n]+)', re.IGNORECASE)
     if pattern.search(caption_text):
         new_cap = pattern.sub(rf'\1 ➤ {brand.split("➤")[-1].strip() if "➤" in brand else brand}', caption_text)
         return new_cap, True
 
-    # 3. Short titles protection
     if is_pure_text:
         clean_txt = caption_text.strip()
         if len(clean_txt) <= 30 or clean_txt.lower() in ["welcome", "complete", "notes", "index", "module"]:
             return caption_text, False
 
-    # 4. Custom Percentage Roll (e.g. 40%)
     if random.random() < (percentage_val / 100.0):
         watermark_str = f"{prefix} ➤ {brand}".strip()
         return f"{caption_text}\n\n{watermark_str}", True
@@ -296,13 +289,10 @@ def render_dashboard(
 
 def parse_telegram_link(link: str) -> Tuple[Optional[int | str], Optional[int], Optional[int]]:
     link = link.strip()
-    
-    # Range format with dash: https://t.me/c/12345/100-5000
     p_range_dash = re.search(r"t\.me/c/(\d+)/(\d+)-(\d+)", link)
     if p_range_dash:
         return int("-100" + p_range_dash.group(1)), int(p_range_dash.group(2)), int(p_range_dash.group(3))
 
-    # Single format: https://t.me/c/12345/100
     p_single = re.search(r"t\.me/c/(\d+)/(\d+)", link)
     if p_single:
         start = int(p_single.group(2))
@@ -397,7 +387,6 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
         ) = saved
         status_label = "PAUSED ⏸️" if is_paused else "RUNNING 🟢"
         
-        # Check if mode2 or mode1 based on source_chat == dest_chat
         mode_title = "MODE 2 (RANGE EDITOR)" if str(source_chat) == str(dest_chat) else "MODE 1 (COPY COPIER)"
         brand_used = get_config("mode2_brand") if mode_title.startswith("MODE 2") else get_config("brand_name")
         prefix_used = get_config("mode2_prefix") if mode_title.startswith("MODE 2") else get_config("caption_prefix")
@@ -432,6 +421,35 @@ async def send_status_view(target_ctx: Message | CallbackQuery):
         except Exception:
             pass
         await target_ctx.answer("Refreshed")
+
+@app.on_message(ALLOWED_FILTER & filters.command(["pause"], prefixes=["/", "."]))
+async def pause_task(client: Client, message: Message):
+    global is_paused
+    if task_running:
+        is_paused = True
+        await message.reply_text("⏸️ <b>Task Paused.</b>")
+
+@app.on_message(ALLOWED_FILTER & filters.command(["resume"], prefixes=["/", "."]))
+async def resume_task(client: Client, message: Message):
+    global is_paused, task_running, task_start_time, task_cancelled
+    if not task_running:
+        saved = get_progress()
+        if saved and saved[10] == "PAUSED":
+            (
+                source_chat, dest_chat, start_id, current_id, last_id,
+                copied_count, videos_count, texts_count, branded_count, _
+            ) = saved
+            is_paused = False
+            task_cancelled = False
+            task_start_time = time.time()
+            is_m2 = (str(source_chat) == str(dest_chat))
+            asyncio.create_task(
+                run_copy_process(
+                    client, message, source_chat, dest_chat, start_id, current_id, last_id,
+                    copied_count, videos_count, texts_count, branded_count, is_mode2=is_m2
+                )
+            )
+            await message.reply_text(f"▶️ <b>Resuming from ID:</b> <code>{current_id}</code>")
 
 @app.on_message(ALLOWED_FILTER & filters.command(["settarget"], prefixes=["/", "."]))
 async def set_target_cmd(client: Client, message: Message):
@@ -527,7 +545,7 @@ async def start_copy_command(client: Client, message: Message):
 
     dest_chat = get_config("target_chat")
     if not dest_chat:
-        await message.reply_text("❌ Target channel not set! Use `/settarget`")
+        await message.reply_text("❌ Target channel not set! Use `/settarget <id>`")
         return
 
     args = message.text.split()
@@ -569,19 +587,17 @@ async def start_mode2_command(client: Client, message: Message):
     args = message.text.split()
     if len(args) < 2:
         await message.reply_text(
-            "❌ <b>Usage:</b> <code>/mode2 &lt;channel_link&gt; &lt;start_id&gt;-&lt;end_id&gt;</code>\n"
+            "❌ <b>Usage:</b> <code>/mode2 &lt;link&gt; &lt;start&gt;-&lt;end&gt;</code>\n"
             "Example: <code>/mode2 https://t.me/c/12345/1 1-5000</code>"
         )
         return
 
-    # Extract channel link and optional explicit range args if provided
     link = args[1]
     chat_id, parsed_start, parsed_end = parse_telegram_link(link)
     
     start_msg_id = parsed_start
     end_msg_id = parsed_end
 
-    # Check if range is explicitly passed as 3rd arg like "1-5000"
     if len(args) >= 3 and "-" in args[2]:
         try:
             s_part, e_part = args[2].split("-")
@@ -598,7 +614,6 @@ async def start_mode2_command(client: Client, message: Message):
     task_cancelled = False
     task_start_time = time.time()
     
-    # In Mode 2, source and dest are the same channel (in-place edit)
     save_progress(str(dest_chat), str(dest_chat), start_msg_id, start_msg_id, end_msg_id, 0, 0, 0, 0, "RUNNING")
 
     asyncio.create_task(
@@ -639,7 +654,6 @@ async def run_copy_process(
         task_running = False
         return
 
-    # Select configuration based on mode
     if is_mode2:
         brand = get_config("mode2_brand", "@skillneast1")
         prefix = get_config("mode2_prefix", "Extracted By")
@@ -724,20 +738,20 @@ async def run_copy_process(
                         # ==================== MODE 2: IN-PLACE EDIT ====================
                         if msg.media:
                             videos_count += 1
-                            await client.edit_message_caption(
-                                chat_id=dest_chat_obj.id,
-                                message_id=msg.id,
-                                caption=final_caption
-                            )
+                            if msg.caption != final_caption:
+                                await client.edit_message_caption(
+                                    chat_id=dest_chat_obj.id,
+                                    message_id=msg.id,
+                                    caption=final_caption
+                                )
                         elif msg.text:
                             texts_count += 1
-                            # Only edit if text differs
                             if msg.text != final_caption:
                                 await client.edit_message_text(
                                     chat_id=dest_chat_obj.id,
                                     message_id=msg.id,
                                     text=final_caption
-                                />
+                                )
                         copied_count += 1
                     else:
                         # ==================== MODE 1: COPY & PASTE ====================
@@ -834,7 +848,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Ultimate Dual-Mode Userbot is Online & Ready on Railway!")
+    print("✅ Ultimate Dual-Mode V2 Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
