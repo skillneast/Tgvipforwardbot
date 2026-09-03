@@ -37,7 +37,7 @@ if not SESSION_STRING:
 
 DELAY_SECONDS = float(os.environ.get("DELAY_SECONDS", 1.0))
 PORT = int(os.environ.get("PORT", 8080))
-DB_NAME = "ultimate_dual_mode_v9.db"
+DB_NAME = "ultimate_dual_mode_v10.db"
 
 # ==================== DATABASE SETUP ====================
 def get_db():
@@ -150,7 +150,7 @@ init_db()
 
 # ==================== PYROGRAM CLIENT ====================
 app = Client(
-    "ultimate_dual_mode_v9_session",
+    "ultimate_dual_mode_v10_session",
     api_id=API_ID,
     api_hash=API_HASH,
     session_string=SESSION_STRING,
@@ -162,7 +162,7 @@ task_cancelled = False
 task_start_time = 0.0
 active_dashboard_msg: Optional[Message] = None
 
-# ==================== UI & ADVANCED ENTITY CAPTION LOGIC ====================
+# ==================== UI & UTF-16 ENTITY CAPTION ENGINE ====================
 def format_time(seconds: float) -> str:
     seconds = int(max(0, seconds))
     hours, remainder = divmod(seconds, 3600)
@@ -202,11 +202,10 @@ def process_caption_custom(
             return f"{prefix} ➤ {brand}", True
         return "", False
 
+    clean_cap = caption_text.replace(">", "").strip()
     clean_brand = brand.split("➤")[-1].strip() if "➤" in brand else brand
 
-    # 0. ENTITY-BASED mentions/hyperlinked usernames
-    # Offsets ko accurate rakhne ke liye entity replacement caption_text par pehle execute hoti hai
-    work_text = caption_text
+    # 0. ENTITY-BASED mentions — ORIGINAL caption_text par, clean_cap par nahi!
     replaced_via_entity = False
     if entities:
         spans = []
@@ -214,14 +213,14 @@ def process_caption_custom(
             etype = str(getattr(ent, "type", "")).lower()
             if "mention" in etype or "text_link" in etype:
                 try:
-                    piece = extract_entity_text(work_text, ent.offset, ent.length)
+                    piece = extract_entity_text(caption_text, ent.offset, ent.length)
                 except Exception:
                     continue
                 if piece:
                     spans.append((ent.offset, ent.length))
 
         if spans:
-            utf16 = work_text.encode("utf-16-le")
+            utf16 = caption_text.encode("utf-16-le")
             spans.sort(key=lambda s: s[0])
             rebuilt = b""
             cursor = 0
@@ -234,9 +233,7 @@ def process_caption_custom(
                 cursor = end
                 replaced_via_entity = True
             rebuilt += utf16[cursor:]
-            work_text = rebuilt.decode("utf-16-le", errors="ignore")
-
-    clean_cap = work_text.replace(">", "").strip()
+            clean_cap = rebuilt.decode("utf-16-le", errors="ignore").replace(">", "").strip()
 
     if replaced_via_entity:
         return clean_cap, True
@@ -303,7 +300,7 @@ def render_dashboard(
     eta_str = format_time(eta_sec) if remaining_msgs > 0 else "00m 00s"
 
     card = (
-        f"<b>🚀 {mode_title} LIVE DASHBOARD V9</b>\n"
+        f"<b>🚀 {mode_title} LIVE DASHBOARD V10</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📍 <b>Source/Channel:</b> <code>{source_chat}</code>\n"
         f"🎯 <b>Target Destination:</b> <code>{dest_chat}</code>\n"
@@ -382,7 +379,7 @@ async def start_web_server():
     server = uvicorn.Server(config)
     await server.serve()
 
-# ==================== COMMAND FILTERS DEFINITION ====================
+# ==================== COMMAND FILTERS ====================
 COMMAND_FILTER = (filters.me | filters.private)
 ALLOWED_FILTER = COMMAND_FILTER
 
@@ -396,7 +393,7 @@ async def start_command(client: Client, message: Message):
     m2_live = get_config("mode2_live_active", "off")
 
     welcome_text = (
-        "<b>🤖 Ultimate Dual-Mode Userbot V9 Active</b>\n"
+        "<b>🤖 Ultimate Dual-Mode Userbot V10 Active</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎯 <b>Mode 1 Target:</b> <code>{target1}</code> | Brand: <code>{brand1}</code>\n"
         f"🎯 <b>Mode 2 Target:</b> <code>{target2}</code> | Brand: <code>{brand2}</code>\n"
@@ -966,7 +963,7 @@ async def main():
     await app.start()
     print("⚡ Syncing dialogs into peer cache...")
     await sync_dialogs(app)
-    print("✅ Ultimate Dual-Mode V9 Userbot is Online & Ready on Railway!")
+    print("✅ Ultimate Dual-Mode V10 Userbot is Online & Ready on Railway!")
     await start_web_server()
 
 if __name__ == "__main__":
